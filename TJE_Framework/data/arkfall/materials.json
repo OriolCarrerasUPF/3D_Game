@@ -1,0 +1,13 @@
+{
+  "schemaVersion": 1,
+  "materials": [
+    { "id": "surface", "tint": [0.92, 0.94, 0.97, 1.0] },
+    { "id": "crew", "tint": [1.0, 1.0, 1.0, 1.0] },
+    { "id": "architecture", "tint": [0.96, 0.98, 1.0, 1.0] },
+    { "id": "machinery", "tint": [1.0, 0.92, 0.82, 1.0] },
+    { "id": "interior", "tint": [0.84, 0.88, 0.94, 1.0] },
+    { "id": "storage", "tint": [0.95, 0.96, 1.0, 1.0] },
+    { "id": "resource", "tint": [1.0, 0.92, 0.9, 1.0] },
+    { "id": "resource_copper", "tint": [0.9, 0.72, 0.62, 1.0] }
+  ]
+}

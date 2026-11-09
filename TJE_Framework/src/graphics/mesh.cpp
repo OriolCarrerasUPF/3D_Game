@@ -6,10 +6,26 @@
 #include "framework/framework.h"
 
 #include <cassert>
+#include <cmath>
+#include <cstring>
 #include <iostream>
 #include <limits>
 #include <sys/stat.h>
 #include <filesystem>
+#include <fstream>
+#include <sstream>
+
+namespace
+{
+	template <size_t N>
+	bool copyFixedName(char (&destination)[N], const std::string& source)
+	{
+		if (source.empty() || source.size() >= N)
+			return false;
+		std::memcpy(destination, source.c_str(), source.size() + 1);
+		return true;
+	}
+}
 
 #include "framework/camera.h"
 #include "texture.h"
@@ -752,29 +768,32 @@ struct sMeshInfo
 
 bool Mesh::readBin(const char* filename)
 {
-	FILE* f;
 	assert(filename);
 
 	struct stat stbuffer;
-
-	stat(filename, &stbuffer);
-	f = fopen(filename, "rb");
+	if (stat(filename, &stbuffer) != 0 || stbuffer.st_size < 4 + static_cast<decltype(stbuffer.st_size)>(sizeof(sMeshInfo)))
+		return false;
+	FILE* f = fopen(filename, "rb");
 	if (f == NULL)
 		return false;
 
-	unsigned int size = (unsigned int)stbuffer.st_size;
-	char* data = new char[size];
-	fread(data, size, 1, f);
+	const size_t size = static_cast<size_t>(stbuffer.st_size);
+	std::vector<char> data(size);
+	if (fread(data.data(), 1, size, f) != size)
+	{
+		fclose(f);
+		return false;
+	}
 	fclose(f);
 
 	//watermark
-	if (memcmp(data, "MBIN", 4) != 0)
+	if (memcmp(data.data(), "MBIN", 4) != 0)
 	{
 		std::cout << "[ERROR] loading BIN: invalid content: " << filename << std::endl;
 		return false;
 	}
 
-	char* pos = data + 4;
+	char* pos = data.data() + 4;
 	sMeshInfo info;
 	memcpy(&info, pos, sizeof(sMeshInfo));
 	pos += sizeof(sMeshInfo);
@@ -1094,81 +1113,69 @@ bool Mesh::loadASE(const char* filename)
 
 bool Mesh::parseMTL(const char* filename)
 {
-	struct stat stbuffer;
-
-	FILE* f = fopen(filename, "rb");
-	if (f == NULL)
+	std::ifstream file(filename);
+	if (!file)
 		return false;
 
-	stat(filename, &stbuffer);
-
-	unsigned int size = stbuffer.st_size;
-	char* data = new char[size + 1];
-	fread(data, size, 1, f);
-	fclose(f);
-	data[size] = 0;
-
-	char* pos = data;
-	char line[255];
-	int i = 0;
-
-	bool parsingMaterial = false;
+	bool parsing_material = false;
 	std::string material_name;
-
-	sMaterialInfo info;
-
-	//parse file
-	while (*pos != 0)
+	sMaterialInfo info{};
+	std::string line;
+	while (std::getline(file, line))
 	{
-		if (*pos == '\n') pos++;
-		if (*pos == '\r') pos++;
+		std::istringstream line_stream(line);
+		std::string directive;
+		line_stream >> directive;
+		if (directive.empty() || directive[0] == '#')
+			continue;
 
-		//read one line
-		i = 0;
-		while (i < 255 && pos[i] != '\n' && pos[i] != '\r' && pos[i] != 0) i++;
-		memcpy(line, pos, i);
-		line[i] = 0;
-		pos = pos + i;
-
-		//std::cout << "Line: \"" << line << "\"" << std::endl;
-		if (*line == '#' || *line == 0) continue; //comment
-
-		//tokenize line
-		std::vector<std::string> tokens = tokenize(line, " ");
-
-		if (tokens.empty()) continue;
-
-		if (tokens[0] == "Ka")
+		if (directive == "newmtl")
 		{
-			info.Ka = Vector3((float)atof(tokens[1].c_str()), (float)atof(tokens[2].c_str()), (float)atof(tokens[3].c_str()));
-		}
-		else if (tokens[0] == "Kd")
-		{
-			info.Kd = Vector3((float)atof(tokens[1].c_str()), (float)atof(tokens[2].c_str()), (float)atof(tokens[3].c_str()));
-		}
-		else if (tokens[0] == "Ks")
-		{
-			info.Ks = Vector3((float)atof(tokens[1].c_str()), (float)atof(tokens[2].c_str()), (float)atof(tokens[3].c_str()));
-		}
-		else if (tokens[0] == "map_Kd")
-		{
-			std::filesystem::path mesh_path = std::filesystem::path(filename);
-			info.Kd_texture = Texture::Get((mesh_path.parent_path().string() + "/" + tokens[1]).c_str());
-		}
-		else if (tokens[0] == "newmtl") //material file
-		{
-			if (parsingMaterial) {
-				materials[material_name] = info;
+			std::string next_name;
+			if (!(line_stream >> next_name) || next_name.size() >= sizeof(sSubmeshDrawCallInfo::material))
+			{
+				std::cerr << "Invalid or overlong MTL material name in " << filename << std::endl;
+				return false;
 			}
-			parsingMaterial = true;
-			material_name = tokens[1];
+			if (parsing_material)
+				materials[material_name] = info;
+			parsing_material = true;
+			material_name = next_name;
+			info = sMaterialInfo{};
+		}
+		else if (directive == "Ka" || directive == "Kd" || directive == "Ks")
+		{
+			float r, g, b;
+			if (!(line_stream >> r >> g >> b) || !std::isfinite(r) || !std::isfinite(g) || !std::isfinite(b))
+			{
+				std::cerr << "Invalid " << directive << " color in " << filename << std::endl;
+				return false;
+			}
+			const Vector3 color(r, g, b);
+			if (directive == "Ka") info.Ka = color;
+			else if (directive == "Kd") info.Kd = color;
+			else info.Ks = color;
+		}
+		else if (directive == "map_Kd")
+		{
+			std::string texture_name;
+			if (!(line_stream >> texture_name))
+			{
+				std::cerr << "Missing map_Kd path in " << filename << std::endl;
+				return false;
+			}
+			const std::filesystem::path texture_path = std::filesystem::path(filename).parent_path() / texture_name;
+			info.Kd_texture = Texture::Get(texture_path.string().c_str());
+			if (!info.Kd_texture)
+			{
+				std::cerr << "Could not load diffuse map " << texture_path.string() << std::endl;
+				return false;
+			}
 		}
 	}
-
+	if (file.bad() || !parsing_material)
+		return false;
 	materials[material_name] = info;
-
-	std::cout << "[MTL] ";
-
 	return true;
 }
 
@@ -1185,13 +1192,17 @@ bool Mesh::loadOBJ(const char* filename)
 
 	stat(filename, &stbuffer);
 
-	unsigned int size = stbuffer.st_size;
-	char* data = new char[size + 1];
-	fread(data, size, 1, f);
+	const size_t size = static_cast<size_t>(stbuffer.st_size);
+	std::string data(size + 1, '\0');
+	if (fread(data.data(), 1, size, f) != size)
+	{
+		fclose(f);
+		std::cerr << "Could not read OBJ file: " << filename << std::endl;
+		return false;
+	}
 	fclose(f);
-	data[size] = 0;
 
-	char* pos = data;
+	char* pos = data.data();
 	char line[255];
 	int i = 0;
 
@@ -1224,7 +1235,12 @@ bool Mesh::loadOBJ(const char* filename)
 
 		//read one line
 		i = 0;
-		while (i < 255 && pos[i] != '\n' && pos[i] != '\r' && pos[i] != 0) i++;
+		while (i < sizeof(line) - 1 && pos[i] != '\n' && pos[i] != '\r' && pos[i] != 0) i++;
+		if (i == sizeof(line) - 1 && pos[i] != '\n' && pos[i] != '\r' && pos[i] != 0)
+		{
+			std::cerr << "OBJ line exceeds the parser's safe limit in " << filename << std::endl;
+			return false;
+		}
 		memcpy(line, pos, i);
 		line[i] = 0;
 		pos = pos + i;
@@ -1239,11 +1255,18 @@ bool Mesh::loadOBJ(const char* filename)
 
 		if (tokens[0] == "mtllib") //material file
 		{
-			std::string mesh_path = filename;
-			size_t lastPath = mesh_path.find_last_of('/');
-			std::string path = mesh_path.substr(0, lastPath) + '/' + tokens[1];
+			if (tokens.size() < 2)
+			{
+				std::cerr << "Missing mtllib filename in " << filename << std::endl;
+				return false;
+			}
+			const std::filesystem::path mesh_path(filename);
+			const std::string path = (mesh_path.parent_path() / tokens[1]).string();
 			if (!parseMTL(path.c_str()))
-				std::cerr << "MTL file not found: " << path.c_str() << std::endl;
+			{
+				std::cerr << "Could not load MTL file: " << path << std::endl;
+				return false;
+			}
 		}
 		else if (tokens[0] == "v")
 		{
@@ -1270,13 +1293,17 @@ bool Mesh::loadOBJ(const char* filename)
 		}
 		else if (tokens[0] == "o") // submesh
 		{
-			if (submesh_draw_calls > 0)
+			if (submesh_draw_calls > 0 || vertices.size() > submesh_dc_info.start)
 			{
+				if (submesh_draw_calls >= MAX_SUBMESH_DRAW_CALLS)
+				{
+					std::cerr << "OBJ exceeds MAX_SUBMESH_DRAW_CALLS in " << filename << std::endl;
+					return false;
+				}
 				// Store last submesh drawcall
 				submesh_dc_info.length = vertices.size() - submesh_dc_info.start;
 				last_submesh_vertex = vertices.size();
 				submesh_info.draw_calls[submesh_draw_calls] = submesh_dc_info;
-				submesh_dc_info.start = last_submesh_vertex;
 
 				// Store submesh
 				submesh_info.num_draw_calls = submesh_draw_calls + 1;
@@ -1284,16 +1311,39 @@ bool Mesh::loadOBJ(const char* filename)
 
 				// New submesh
 				memset(&submesh_info, 0, sizeof(submesh_info));
-				strcpy(submesh_info.name, tokens[1].c_str());
+				if (tokens.size() < 2 || !copyFixedName(submesh_info.name, tokens[1]))
+				{
+					std::cerr << "Missing or overlong OBJ object name in " << filename << std::endl;
+					return false;
+				}
 				submesh_draw_calls = 0;
+				last_submesh_vertex = vertices.size();
+				memset(&submesh_dc_info, 0, sizeof(submesh_dc_info));
+				submesh_dc_info.start = vertices.size();
 			}
 			else
-				strcpy(submesh_info.name, tokens[1].c_str());
+			{
+				if (tokens.size() < 2 || !copyFixedName(submesh_info.name, tokens[1]))
+				{
+					std::cerr << "Missing or overlong OBJ object name in " << filename << std::endl;
+					return false;
+				}
+			}
 		}
 		else if (tokens[0] == "usemtl") //surface? it appears one time before the faces
 		{
+			if (tokens.size() < 2 || tokens[1].size() >= sizeof(submesh_dc_info.material))
+			{
+				std::cerr << "Missing or overlong OBJ material name in " << filename << std::endl;
+				return false;
+			}
 			if (last_submesh_vertex != vertices.size())
 			{
+				if (submesh_draw_calls >= MAX_SUBMESH_DRAW_CALLS)
+				{
+					std::cerr << "OBJ exceeds MAX_SUBMESH_DRAW_CALLS in " << filename << std::endl;
+					return false;
+				}
 				// Store draw call
 				submesh_dc_info.length = vertices.size() - submesh_dc_info.start;
 				last_submesh_vertex = vertices.size();
@@ -1302,11 +1352,11 @@ bool Mesh::loadOBJ(const char* filename)
 
 				// New draw call
 				memset(&submesh_dc_info, 0, sizeof(submesh_dc_info));
-				strcpy(submesh_dc_info.material, tokens[1].c_str());
+				copyFixedName(submesh_dc_info.material, tokens[1]);
 				submesh_dc_info.start = last_submesh_vertex;
 			}
 			else
-				strcpy(submesh_dc_info.material, tokens[1].c_str());
+				copyFixedName(submesh_dc_info.material, tokens[1]);
 		}
 		else if (tokens[0] == "g") //surface? it appears one time before the faces
 		{
@@ -1352,22 +1402,47 @@ bool Mesh::loadOBJ(const char* filename)
 		}
 	}
 
-	// if the mtl is not specified in the obj but it's needed
+	// If no mtllib was authored, try the same-name MTL and fail on a bad reference.
 	if (materials.empty()) {
-		std::string mesh_name = filename;
-		replace(mesh_name, ".obj", ".mtl");
-		if (!parseMTL(mesh_name.c_str()))
-			std::cerr << "MTL file not found: " << mesh_name.c_str() << std::endl;
+		std::filesystem::path mesh_path(filename);
+		mesh_path.replace_extension(".mtl");
+		if (!parseMTL(mesh_path.string().c_str()))
+		{
+			std::cerr << "MTL file not found: " << mesh_path.string() << std::endl;
+			return false;
+		}
+	}
+	if (vertices.empty())
+	{
+		std::cerr << "OBJ contains no faces: " << filename << std::endl;
+		return false;
 	}
 
 	box.center = (aabb_max + aabb_min) * 0.5;
 	box.halfsize = (aabb_max - box.center);
 	radius = (float)fmax(aabb_max.length(), aabb_min.length());
 
-	submesh_dc_info.length = vertices.size() - last_submesh_vertex;
+	if (submesh_draw_calls >= MAX_SUBMESH_DRAW_CALLS)
+	{
+		std::cerr << "OBJ exceeds MAX_SUBMESH_DRAW_CALLS in " << filename << std::endl;
+		return false;
+	}
+	submesh_dc_info.length = vertices.size() - submesh_dc_info.start;
 	submesh_info.draw_calls[submesh_draw_calls] = submesh_dc_info;
 	submesh_info.num_draw_calls = submesh_draw_calls + 1;
 	submeshes.push_back(submesh_info);
+	for (const sSubmeshInfo& submesh : submeshes)
+	{
+		for (unsigned int i = 0; i < submesh.num_draw_calls; ++i)
+		{
+			const std::string material_name = submesh.draw_calls[i].material;
+			if (!material_name.empty() && !materials.count(material_name))
+			{
+				std::cerr << "OBJ references missing MTL material '" << material_name << "' in " << filename << std::endl;
+				return false;
+			}
+		}
+	}
 	return true;
 }
 
@@ -1803,7 +1878,7 @@ Mesh* Mesh::Get(const char* filename)
 		m->uploadToVRAM();
 	}
 
-	std::cout << "[OK]  Faces: " << m->vertices.size() / 3 << " Time: " << (getTime() - time) * 0.001 << "sec" << std::endl;
+	std::cout << "[OK]  Faces: " << m->getNumVertices() / 3 << " Time: " << (getTime() - time) * 0.001 << "sec" << std::endl;
 	if (use_binary)
 	{
 		std::cout << "\t\t Writing .BIN ... ";

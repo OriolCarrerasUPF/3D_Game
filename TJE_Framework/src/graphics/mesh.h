@@ -12,9 +12,9 @@ class Skeleton; //for skinned meshes
 class Texture;
 
 //version from 21/01/2024
-#define MESH_BIN_VERSION 12 //this is used to regenerate bins if the format changes
+#define MESH_BIN_VERSION 13 //the submesh draw-call array size changed in version 13
 
-#define MAX_SUBMESH_DRAW_CALLS 16
+#define MAX_SUBMESH_DRAW_CALLS 64
 
 struct BoneInfo {
 	char name[32]; //max 32 chars per bone name
@@ -37,9 +37,9 @@ struct sSubmeshInfo
 
 struct sMaterialInfo
 {
-	Vector3 Ka;
-	Vector3 Kd;
-	Vector3 Ks;
+	Vector3 Ka = Vector3(0.12f, 0.12f, 0.12f);
+	Vector3 Kd = Vector3(1.0f, 1.0f, 1.0f);
+	Vector3 Ks = Vector3(0.0f, 0.0f, 0.0f);
 	Texture* Kd_texture = nullptr;
 };
 
@@ -118,6 +118,12 @@ public:
 
 	unsigned int getNumSubmeshes() { return (unsigned int)submeshes.size(); }
 	unsigned int getNumVertices() { return (unsigned int)interleaved.size() ? (unsigned int)interleaved.size() : (unsigned int)vertices.size(); }
+	unsigned int getNumDrawCalls() const {
+		unsigned int count = 0;
+		for (const sSubmeshInfo& submesh : submeshes)
+			count += submesh.num_draw_calls;
+		return count;
+	}
 
 	//collision testing
 	void* collision_model;

@@ -81,6 +81,13 @@ add_executable(${PROJECT_NAME} ${CG_SOURCES})
 
 target_include_directories(${PROJECT_NAME} PUBLIC ${DIR_SOURCES})
 
+# Pinned, vendored single-header JSON parser used by the data-driven Arkfall loaders.
+add_library(nlohmann_json INTERFACE)
+add_library(nlohmann_json::nlohmann_json ALIAS nlohmann_json)
+target_include_directories(nlohmann_json INTERFACE
+    "${DIR_LIBS}/nlohmann_json/single_include")
+target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
+
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${DIR_ROOT}")

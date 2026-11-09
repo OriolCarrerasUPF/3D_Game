@@ -48,6 +48,7 @@ void Input::update()
 	prev_mouse_state = mouse_state;
 
 	Input::mouse_delta.set(0.0f, 0.0f);
+	Input::mouse_wheel_delta = 0.0f;
 
 	//gamepads
 	for (int i = 0; i < 4; ++i)

@@ -1,0 +1,98 @@
+{
+  "schemaVersion": 1,
+  "shaders": {
+    "standardVertex": "../shaders/basic.vs",
+    "instancedVertex": "../shaders/instanced.vs",
+    "fragment": "../shaders/arkfall_lit.fs"
+  },
+  "assets": [
+    {
+      "id": "terrain_tile",
+      "modelPath": "models/terrain.obj",
+      "materialPath": "models/terrain.mtl",
+      "materialId": "surface",
+      "scale": [1.0, 1.0, 1.0],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.5, 0.0, -0.5], "max": [0.5, 0.0, 0.5] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "astronaut",
+      "modelPath": "models/astronautA.obj",
+      "materialPath": "models/astronautA.mtl",
+      "materialId": "crew",
+      "scale": [2.269, 2.269, 2.269],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.2415919, 0.0, -0.2], "max": [0.2415919, 0.7931839, 0.13] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "exit_gate",
+      "modelPath": "models/gate_simple.obj",
+      "materialPath": "models/gate_simple.mtl",
+      "materialId": "architecture",
+      "scale": [4.0, 4.0, 4.0],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.5, 0.0, -0.25], "max": [0.5, 1.08, 0.25] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "oxygen_machine",
+      "modelPath": "models/machine_barrel.obj",
+      "materialPath": "models/machine_barrel.mtl",
+      "materialId": "machinery",
+      "scale": [2.6, 2.6, 2.6],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.4232051, 0.0, -0.257735], "max": [0.2232051, 0.6, 0.257735] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "interior_floor",
+      "modelPath": "models/platform_large.obj",
+      "materialPath": "models/platform_large.mtl",
+      "materialId": "interior",
+      "scale": [1.0, 1.0, 1.0],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-1.0, 0.0, -1.0], "max": [1.0, 0.1, 1.0] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "storage_barrels",
+      "modelPath": "models/barrels.obj",
+      "materialPath": "models/barrels.mtl",
+      "materialId": "storage",
+      "scale": [3.1, 3.1, 3.1],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.2750001, 0.0, -0.2482051], "max": [0.275, 0.35, 0.2482051] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "iron_deposit",
+      "modelPath": "models/rock.obj",
+      "materialPath": "models/rock.mtl",
+      "materialId": "resource",
+      "scale": [1.9, 1.9, 1.9],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.3716288, 0.0, -0.4715883], "max": [0.4298539, 0.3, 0.3793523] },
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "base_boundary",
+      "modelPath": "models/corridor_wall.obj",
+      "materialPath": "models/corridor_wall.mtl",
+      "materialId": "architecture",
+      "scale": [1.0, 1.0, 1.0],
+      "pivotOffset": [0.0, 0.0, 0.0],
+      "forwardAxis": "+Z",
+      "pickingBounds": { "min": [-0.5, 0.0, -0.5], "max": [-0.4, 0.8, 0.5] },
+      "loadFailureIsFatal": true
+    }
+  ]
+}
