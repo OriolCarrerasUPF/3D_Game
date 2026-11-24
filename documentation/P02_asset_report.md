@@ -1,20 +1,38 @@
 # P02 asset validation
 
-All runtime models are selected copies from the supplied Kenney Space Kit. The source pack is CC0; its license is copied to `data/arkfall/License.txt`. Bounds below are from source OBJ vertices before catalog scaling. Triangle counts and material-run counts are from the framework OBJ loader.
+All runtime models are selected copies from the supplied Kenney Space Kit. The source pack is CC0; its license is copied to `data/arkfall/License.txt`. Bounds below are from source OBJ vertices before catalog scaling. Triangle counts and material-run counts are from the framework OBJ loader. "Catalog scale" is the uniform `scale` in `assets.json`; scene instances may add their own uniform scale on top.
 
-| Asset id | Source OBJ | Bounds (min .. max) | Scale | MTL runs | Loaded triangles |
-|---|---|---|---:|---:|---:|
-| `terrain_tile` | `terrain.obj` | `(-0.5, 0, -0.5) .. (0.5, 0, 0.5)` | 1.0 | 1 | 2 |
-| `astronaut` | `astronautA.obj` | `(-0.2415919, 0, -0.2) .. (0.2415919, 0.7931839, 0.13)` | 2.269 | 18 | 296 |
-| `exit_gate` | `gate_simple.obj` | `(-0.5, 0, -0.25) .. (0.5, 1.08, 0.25)` | 1.0 | 3 | 212 |
-| `oxygen_machine` | `machine_barrel.obj` | `(-0.4232051, 0, -0.257735) .. (0.2232051, 0.6, 0.257735)` | 1.0 | 6 | 338 |
-| `interior_floor` | `platform_large.obj` | `(-1, 0, -1) .. (1, 0.1, 1)` | 1.0 | 3 | 76 |
-| `storage_barrels` | `barrels.obj` | `(-0.2750001, 0, -0.2482051) .. (0.275, 0.35, 0.2482051)` | 1.0 | 10 | 268 |
-| `iron_deposit` | `rock.obj` | `(-0.3716288, 0, -0.4715883) .. (0.4298539, 0.3, 0.3793523)` | 1.0 | 2 | 172 |
-| `base_boundary` | `corridor_wall.obj` | `(-0.5, 0, -0.5) .. (-0.4, 0.8, 0.5)` | 1.0 | 3 | 36 |
+| Asset id | Source OBJ | Bounds (min .. max) | Catalog scale | Walkable surface | MTL runs | Loaded triangles |
+|---|---|---|---:|:---:|---:|---:|
+| `terrain_tile` | `terrain.obj` | `(-0.5, 0, -0.5) .. (0.5, 0, 0.5)` | 1.0 | yes | 1 | 2 |
+| `astronaut` | `astronautA.obj` | `(-0.2415919, 0, -0.2) .. (0.2415919, 0.7931839, 0.13)` | 2.269 | no | 18 | 296 |
+| `exit_gate` | `gate_simple.obj` | `(-0.5, 0, -0.25) .. (0.5, 1.08, 0.25)` | 1.0 | no | 3 | 212 |
+| `oxygen_machine` | `machine_barrel.obj` | `(-0.4232051, 0, -0.257735) .. (0.2232051, 0.6, 0.257735)` | 2.6 | no | 6 | 338 |
+| `interior_floor` | `platform_large.obj` | `(-1, 0, -1) .. (1, 0.1, 1)` | 1.0 | yes | 3 | 76 |
+| `storage_barrels` | `barrels.obj` | `(-0.2750001, 0, -0.2482051) .. (0.275, 0.35, 0.2482051)` | 3.1 | no | 10 | 268 |
+| `iron_deposit` | `rock.obj` | `(-0.3716288, 0, -0.4715883) .. (0.4298539, 0.3, 0.3793523)` | 1.9 | no | 2 | 172 |
+| `base_boundary` | `corridor_wall.obj` | `(-0.5, 0, -0.5) .. (-0.4, 0.8, 0.5)` | 1.0 | no | 3 | 36 |
 
-All asset origins touch the ground at `y=0`; `machine_barrel.obj` has a floating-point minimum of `-9.38e-14`, treated as zero. Catalog pivot offsets are zero. The astronaut's uniform scale gives a height of approximately 1.800 m. `platform_large` remains a 2×2 m module. The gate's 1 m width is on local X and its scene instance rotates it 90° to span the west-side doorway along world Z. The astronaut's `+Z` facing is inferred from the source OBJ's asymmetric front/back bounds; the first rendered frame confirms upright placement and visibility.
+All asset origins touch the ground at `y=0`; `machine_barrel.obj` has a floating-point minimum of `-9.38e-14`, treated as zero. Catalog pivot offsets are zero. The astronaut's uniform scale gives a height of approximately 1.800 m. `platform_large` remains a 2×2 m, 0.1 m high module. The astronaut's `+Z` facing is inferred from the source OBJ's asymmetric front/back bounds.
 
 None of the selected MTL files declares `map_Kd`; the renderer displays their distinct `Kd` material colors with `u_maps.x = 0`. The fragment shader samples a diffuse map only when an MTL actually supplies one.
 
-The Debug startup loaded all eight selected OBJ/MTL pairs from source files with the binary-cache path disabled. Each loader result was `[OK]`; catalog bounds matched loaded OBJ bounds within `0.0001` units. The rendered static scene contains 4,229 instances in nine asset/material groups. The 4,096 terrain tiles form one instanced group and one mesh draw call; the first scene render issued 48 mesh draw calls overall.
+The Debug startup loads the OBJ/MTL pairs referenced by `scene.json` from source files with the binary-cache path disabled. Each loader result is `[OK]`; catalog bounds match loaded OBJ bounds within `0.0001` units.
+
+## Corrections made before P03 (24 Nov 2026)
+
+**Transform order (rendering bug).** TJE's `Matrix44` uses row-vector order (`A * B` applies `A` first) and `translate/rotate/scale` pre-multiply. P02 built instance matrices as scale→rotate→translate calls (which *applies* translate first) and composed `instance * asset`. Rotated instances were therefore rotated around the world origin (the east walls were drawn inside the base at x≈−7.05; the south/north walls ended at x≈8–9) and the asset scale multiplied the placement position (the 1.9× deposits landed at (−44.6, −37), off the 64 m map). All matrices are now built in `src/game/world_transform.*` (asset normalization first, then instance placement) and covered by headless regression tests.
+
+**Base boundary.** The 62 wall pieces now sit on interior cells and are rotated onto the outer edge of their cell (west 0°, east 180°, south 90°, north −90°). They are visual only (`blocksNavigation: false`). Navigation will model the boundary as inside/outside zones connected only through Exit Door crossings (see the plan, C5).
+
+**Exit Door.** Team decision: a **2-cell door**. `scenario.json` declares the crossings `(23,31)→(24,31)` and `(23,32)→(24,32)`; the two wall pieces on those edges are removed. `exit_gate` keeps catalog scale 1.0 (1 m wide, 1.08 m tall source size) and the scene instance uses scale 2.0, so the gate is 2 m wide and 2.16 m tall: it exactly covers the gap and the 1.8 m astronaut fits under it. The gate scale is derived from the number of crossings by the scene generator, so a 1-cell door only needs a data change.
+
+**No static colonist.** `astronaut_reference` was removed from `scene.json`. Colonists are spawned as dynamic views from the simulation (P03). The `astronaut` asset stays in the catalog and is loaded on demand.
+
+**Navigation blockers.** Only deposits and declared `staticBlockers` block navigation, and the two placeholder machines (`oxygenator_preview`, `storage_preview`) are now centred on 2×2 cell footprints ((29..30, 31..32) and (33..34, 32..33)) so their blockers match the visuals.
+
+**Interior floor height.** The `walkableSurface` flag marks terrain and floor modules; `ColonyWorld` builds a visual height map from them so dynamic views stand on the 0.1 m floor indoors while gameplay stays planar at y = 0.
+
+**Scene generation.** `scene.json` is generated by `tools/generate_arkfall_scene.py` from `scenario.json` + `assets.json` and is no longer edited by hand. `python tools/generate_arkfall_scene.py --check` verifies that both files are consistent.
+
+Resulting static scene: 4,227 instances in 8 asset/material groups (3 instanced); the 4,096 terrain tiles are one instanced group drawn with one mesh draw call; the first frame issues 30 scene draw calls.

@@ -33,6 +33,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	, mouse_locked(false)
 	, asset_catalog()
 	, colony_world(asset_catalog)
+	, simulation_clock()
 	, scene_stats_logged(false)
 {
 	if (!window)
@@ -50,6 +51,9 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	if (!scene_result)
 		throw std::runtime_error(scene_result.error->describe());
 
+	// Only assets referenced by data are loaded. P03 adds the colonist visual asset
+	// (from scenario/colonist data) to this set before loading; dynamic views can only
+	// be created for assets loaded here.
 	std::set<std::string> referenced_assets;
 	for (const StaticSceneInstance& instance : scene_result.instances)
 		referenced_assets.insert(instance.asset_id);
@@ -130,6 +134,27 @@ void Game::render(void)
 }
 
 void Game::update(double seconds_elapsed)
+{
+	// Camera and (later) UI use real frame time and keep working while paused.
+	updateCamera(seconds_elapsed);
+
+	// Gameplay advances only in fixed steps (plan C4).
+	const int steps = simulation_clock.advance(seconds_elapsed);
+	for (int i = 0; i < steps; ++i)
+		fixedUpdate(simulation_clock.getStepSeconds());
+
+	// P03: synchronise dynamic views from simulation records here, once per frame,
+	// e.g. colony_world.setDynamicViewPose(view_id, colonist.position, colonist.yaw).
+}
+
+void Game::fixedUpdate(double fixed_dt)
+{
+	// P03: colony_simulation.tick(static_cast<float>(fixed_dt));
+	// Use simulation_clock.getSimulationTime() for gameplay timing, never Game::time.
+	(void)fixed_dt;
+}
+
+void Game::updateCamera(double seconds_elapsed)
 {
 	const float camera_distance = static_cast<float>((camera->eye - camera->center).length());
 	const float zoom_speed_scale = camera_distance / camera_reference_pan_distance;

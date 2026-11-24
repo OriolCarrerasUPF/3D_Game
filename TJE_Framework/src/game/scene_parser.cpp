@@ -1,127 +1,24 @@
 #include "scene_parser.h"
 
-#include <nlohmann/json.hpp>
+#include "json_data.h"
 
-#include <cmath>
-#include <fstream>
 #include <set>
 #include <string>
 
-namespace
-{
-	using Json = nlohmann::json;
-
-	DataLoadError makeError(const std::filesystem::path& file, const std::string& pointer, const std::string& message)
-	{
-		return DataLoadError{ file, pointer, message };
-	}
-
-	bool validateKeys(const Json& value, const std::set<std::string>& required,
-		const std::set<std::string>& optional, const std::filesystem::path& file,
-		const std::string& pointer, DataLoadError& error)
-	{
-		if (!value.is_object())
-		{
-			error = makeError(file, pointer, "expected an object");
-			return false;
-		}
-		for (const std::string& key : required)
-		{
-			if (!value.contains(key))
-			{
-				error = makeError(file, pointer + "/" + key, "required field is missing");
-				return false;
-			}
-		}
-		for (auto it = value.begin(); it != value.end(); ++it)
-		{
-			if (!required.count(it.key()) && !optional.count(it.key()))
-			{
-				error = makeError(file, pointer + "/" + it.key(), "unknown field");
-				return false;
-			}
-		}
-		return true;
-	}
-
-	bool readString(const Json& value, std::string& output, const std::filesystem::path& file,
-		const std::string& pointer, DataLoadError& error)
-	{
-		if (!value.is_string() || value.get_ref<const std::string&>().empty())
-		{
-			error = makeError(file, pointer, "expected a non-empty string");
-			return false;
-		}
-		output = value.get<std::string>();
-		return true;
-	}
-
-	bool readFiniteFloat(const Json& value, float& output, const std::filesystem::path& file,
-		const std::string& pointer, DataLoadError& error)
-	{
-		if (!value.is_number())
-		{
-			error = makeError(file, pointer, "expected a finite number");
-			return false;
-		}
-		const double number = value.get<double>();
-		if (!std::isfinite(number) || !std::isfinite(static_cast<float>(number)))
-		{
-			error = makeError(file, pointer, "number must be finite and representable as a float");
-			return false;
-		}
-		output = static_cast<float>(number);
-		return true;
-	}
-
-	bool readVector3(const Json& value, Vector3& output, const std::filesystem::path& file,
-		const std::string& pointer, DataLoadError& error)
-	{
-		if (!value.is_array() || value.size() != 3)
-		{
-			error = makeError(file, pointer, "expected an array of exactly three numbers");
-			return false;
-		}
-		float components[3]{};
-		for (size_t i = 0; i < 3; ++i)
-		{
-			if (!readFiniteFloat(value[i], components[i], file, pointer + "/" + std::to_string(i), error))
-				return false;
-		}
-		output.set(components[0], components[1], components[2]);
-		return true;
-	}
-}
-
 SceneLoadResult SceneParser::parse(const std::filesystem::path& path, const AssetCatalog& assets) const
 {
-	SceneLoadResult result;
-	Json document;
-	std::ifstream input(path);
-	if (!input)
-	{
-		result.error = makeError(path, "", "could not open JSON file");
-		return result;
-	}
-	try
-	{
-		input >> document;
-	}
-	catch (const Json::parse_error& exception)
-	{
-		result.error = makeError(path, "", std::string("invalid JSON at byte ") + std::to_string(exception.byte) + ": " + exception.what());
-		return result;
-	}
+	using json_data::Json;
+	using json_data::childPointer;
+	using json_data::makeError;
 
+	SceneLoadResult result;
 	DataLoadError error;
-	if (!validateKeys(document, {"schemaVersion", "instances"}, {}, path, "", error))
+	Json document;
+	if (!json_data::loadJsonFile(path, document, error) ||
+		!json_data::validateKeys(document, {"schemaVersion", "instances"}, {}, path, "", error) ||
+		!json_data::checkSchemaVersion(document, 1, path, error))
 	{
 		result.error = error;
-		return result;
-	}
-	if (!document["schemaVersion"].is_number_integer() || document["schemaVersion"].get<int>() != 1)
-	{
-		result.error = makeError(path, "/schemaVersion", "expected supported schema version 1");
 		return result;
 	}
 	if (!document["instances"].is_array())
@@ -131,66 +28,47 @@ SceneLoadResult SceneParser::parse(const std::filesystem::path& path, const Asse
 	}
 
 	std::set<std::string> ids;
-	result.instances.reserve(document["instances"].size());
-	for (size_t i = 0; i < document["instances"].size(); ++i)
+	std::vector<StaticSceneInstance> instances;
+	instances.reserve(document["instances"].size());
+	for (std::size_t i = 0; i < document["instances"].size(); ++i)
 	{
 		const Json& item = document["instances"][i];
-		const std::string pointer = "/instances/" + std::to_string(i);
-		if (!validateKeys(item, {"id", "assetId", "position", "rotationYDegrees", "scale", "blocksNavigation"},
-			{"materialId"}, path, pointer, error))
-		{
-			result.error = error;
+		const std::string pointer = childPointer("/instances", i);
+		auto fail = [&](const DataLoadError& failure) {
+			result.error = failure;
 			return result;
-		}
+		};
 
 		StaticSceneInstance instance;
-		if (!readString(item["id"], instance.id, path, pointer + "/id", error) ||
-			!readString(item["assetId"], instance.asset_id, path, pointer + "/assetId", error) ||
-			!readVector3(item["position"], instance.position, path, pointer + "/position", error) ||
-			!readVector3(item["scale"], instance.scale, path, pointer + "/scale", error) ||
-			!readFiniteFloat(item["rotationYDegrees"], instance.rotation_y_degrees, path, pointer + "/rotationYDegrees", error))
-		{
-			result.error = error;
-			return result;
-		}
+		if (!json_data::validateKeys(item, {"id", "assetId", "position", "rotationYDegrees", "scale", "blocksNavigation"},
+				{"materialId"}, path, pointer, error) ||
+			!json_data::readString(item["id"], instance.id, path, childPointer(pointer, "id"), error) ||
+			!json_data::readString(item["assetId"], instance.asset_id, path, childPointer(pointer, "assetId"), error) ||
+			!json_data::readVector3(item["position"], instance.position, path, childPointer(pointer, "position"), error) ||
+			!json_data::readVector3(item["scale"], instance.scale, path, childPointer(pointer, "scale"), error) ||
+			!json_data::readFiniteFloat(item["rotationYDegrees"], instance.rotation_y_degrees, path, childPointer(pointer, "rotationYDegrees"), error) ||
+			!json_data::readBool(item["blocksNavigation"], instance.blocks_navigation, path, childPointer(pointer, "blocksNavigation"), error))
+			return fail(error);
+
 		if (!ids.insert(instance.id).second)
-		{
-			result.error = makeError(path, pointer + "/id", "duplicate instance id '" + instance.id + "'");
-			return result;
-		}
-		if (!item["blocksNavigation"].is_boolean())
-		{
-			result.error = makeError(path, pointer + "/blocksNavigation", "expected a boolean");
-			return result;
-		}
-		instance.blocks_navigation = item["blocksNavigation"].get<bool>();
+			return fail(makeError(path, childPointer(pointer, "id"), "duplicate instance id '" + instance.id + "'"));
 
 		const AssetDefinition* asset = assets.findAsset(instance.asset_id);
 		if (!asset)
-		{
-			result.error = makeError(path, pointer + "/assetId", "unknown asset id '" + instance.asset_id + "'");
-			return result;
-		}
+			return fail(makeError(path, childPointer(pointer, "assetId"), "unknown asset id '" + instance.asset_id + "'"));
+
 		instance.material_id = asset->material_id;
-		if (item.contains("materialId") && !readString(item["materialId"], instance.material_id, path, pointer + "/materialId", error))
-		{
-			result.error = error;
-			return result;
-		}
+		if (item.contains("materialId") &&
+			!json_data::readString(item["materialId"], instance.material_id, path, childPointer(pointer, "materialId"), error))
+			return fail(error);
 		if (!assets.findMaterial(instance.material_id))
-		{
-			result.error = makeError(path, pointer + "/materialId", "unknown material id '" + instance.material_id + "'");
-			return result;
-		}
-		if (instance.scale.x <= 0.0f || instance.scale.y <= 0.0f || instance.scale.z <= 0.0f ||
-			std::fabs(instance.scale.x - instance.scale.y) > 0.0001f ||
-			std::fabs(instance.scale.x - instance.scale.z) > 0.0001f)
-		{
-			result.error = makeError(path, pointer + "/scale", "scene scale must be positive and uniform");
-			return result;
-		}
-		result.instances.push_back(instance);
+			return fail(makeError(path, childPointer(pointer, "materialId"), "unknown material id '" + instance.material_id + "'"));
+		if (!json_data::isPositiveUniformScale(instance.scale))
+			return fail(makeError(path, childPointer(pointer, "scale"), "scene scale must be positive and uniform"));
+
+		instances.push_back(instance);
 	}
 
+	result.instances.swap(instances);
 	return result;
 }

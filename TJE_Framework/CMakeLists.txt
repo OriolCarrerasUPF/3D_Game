@@ -145,3 +145,36 @@ set_target_properties(${PROJECT_NAME} PROPERTIES CXX_STANDARD_REQUIRED ON)
 
 message(STATUS "dir root: ${DIR_ROOT}")
 message(STATUS "bin root: ${CMAKE_BINARY_DIR}")
+
+# ---------------------------------------------------------------------------
+# Headless Arkfall tests (plan E2). Only sources that need no window or OpenGL
+# context are compiled here: JSON loaders, transforms, timing and, from P03 on,
+# navigation/simulation. Add each new headless source to ARKFALL_HEADLESS_SOURCES.
+#   cmake --build build --config Debug --target arkfall_tests
+#   ctest --test-dir build -C Debug --output-on-failure
+# ---------------------------------------------------------------------------
+enable_testing()
+
+set(ARKFALL_HEADLESS_SOURCES
+    ${DIR_SOURCES}/framework/framework.cpp
+    ${DIR_SOURCES}/game/json_data.cpp
+    ${DIR_SOURCES}/game/asset_catalog.cpp
+    ${DIR_SOURCES}/game/scene_parser.cpp
+    ${DIR_SOURCES}/game/world_transform.cpp
+    ${DIR_SOURCES}/game/surface_height_map.cpp
+)
+file(GLOB ARKFALL_TEST_SOURCES CONFIGURE_DEPENDS ${DIR_ROOT}/tests/*.cpp ${DIR_ROOT}/tests/*.h)
+
+add_executable(arkfall_tests ${ARKFALL_TEST_SOURCES} ${ARKFALL_HEADLESS_SOURCES})
+target_include_directories(arkfall_tests PRIVATE ${DIR_SOURCES} ${DIR_ROOT}/tests
+    $<TARGET_PROPERTY:SDL2,INTERFACE_INCLUDE_DIRECTORIES>)
+add_dependencies(arkfall_tests sdl_headers_copy)
+target_link_libraries(arkfall_tests PRIVATE nlohmann_json::nlohmann_json libglew_static OpenGL::GL)
+set_target_properties(arkfall_tests PROPERTIES CXX_STANDARD 20 CXX_STANDARD_REQUIRED ON FOLDER "Tests"
+    VS_DEBUGGER_WORKING_DIRECTORY "${DIR_ROOT}")
+if (APPLE)
+    target_link_libraries(arkfall_tests PRIVATE ${cocoa_lib})
+endif()
+
+# Run from the framework root so the shipped data/arkfall files are validated too.
+add_test(NAME arkfall_tests COMMAND arkfall_tests WORKING_DIRECTORY ${DIR_ROOT})

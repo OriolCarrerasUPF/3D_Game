@@ -2,7 +2,7 @@
 
 **Planning date:** 8 November 2026  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source; game implementation has not started.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01 and P02 are implemented; the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md) and in sections C5, C9 and P03 below.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
@@ -357,7 +357,7 @@ Proposed gameplay visual scales and resulting world-space bounds (m):
 | Copper deposit (`rock_crystals.obj`) | 0.8509 × 0.3375 × 0.8015 | 1.9 | 1.6168 × 0.6413 × 1.5228 | 1.6–1.7 m deposit marker |
 | Haven Beacon core (`machine_wireless.obj`) | 0.75 × 0.6 × 0.5 | 3 | 2.25 × 1.8 × 1.5 | 4×4 landmark composition |
 | Haven Beacon dish (`satelliteDish_large.obj`) | 0.8487 × 0.8142 × 0.7369 | 3 | 2.5461 × 2.4426 × 2.2106 | 4×4 landmark composition |
-| Exit Door (`gate_simple.obj`) | 1 × 1.08 × 0.5 | 1 | 1 × 1.08 × 0.5 | 1 m portal; retain current fit |
+| Exit Door (`gate_simple.obj`) | 1 × 1.08 × 0.5 | 1 (catalog) × 2 (scene instance) | 2 × 2.16 × 1 | 2-cell door: 2 m wide, the 1.8 m colonist fits under it |
 | Static base wall (`corridor_wall.obj`) | 0.1 × 0.8 × 1 | 1 | 0.1 × 0.8 × 1 | 1 m boundary segment; retain module fit |
 | Terrain (`terrain.obj`) | 1 × 0 × 1 | 1 | 1 × 0 × 1 | 1×1 m terrain cell; retain current fit |
 | Interior floor module (`platform_large.obj`) | 2 × 0.1 × 2 | 1 | 2 × 0.1 × 2 | 2×2 m visual module; retain current fit |
@@ -561,8 +561,8 @@ Use a **64×64 XZ grid with 1 m cells** as the MVP world coordinate system. The 
 - Each building definition includes its model scale, pivot offset, forward direction, rotation steps, and walkable service/access offsets. A visual may be smaller than its logical footprint, but unexplained invisible blocking beyond one 1 m safety margin is not allowed.
 - Access/service cells are walkable cells adjacent to footprints and are reserved/validated with the building footprint.
 - Indoor cells form a fixed roofless base region.
-- The boundary blocks inside/outside transitions except through completed Exit Door portals.
-- The Exit Door occupies a boundary edge and defines one explicit pair of inside/outside portal cells. Door width, mesh pivot and visual opening must align to those cells. Only a completed, enabled door permits crossing; power requirements affect operation only if specified by its definition.
+- The boundary is modelled on cell **edges**, not cells: every cell is classified as inside or outside, and a step between an inside and an outside cell is allowed only through an open Exit Door crossing. Wall pieces are visual only (`blocksNavigation: false`) and never remove interior or exterior cells.
+- An Exit Door is a **list of crossings**, each an `(outside cell, inside cell)` 4-neighbour pair on the same side of the base and contiguous. `NavigationGrid` stores crossings per door so a 1-cell or wider door works without code changes. Door width, mesh pivot and visual opening align to those crossings (the scene generator scales the gate to the crossing count). Only a completed, enabled door permits crossing; power requirements affect operation only if specified by its definition.
 - Decorative objects only block navigation when explicitly marked.
 
 This preserves the GDD's Exit Door rule without simulating air volumes or building a physics engine.
@@ -589,9 +589,9 @@ Known pack measurements establish useful anchors: `terrain.obj` spans 1×1 m in 
 
 For every selected OBJ, P02 must record tested bounds, MTL/material runs, semantic facing, foot contact and loader result. Define a world-space picking proxy and navigation footprint separately. Do not use `Mesh::testSphereCollision` as the building-placement system; use grid occupancy. Ray picking uses the visual proxy followed by mesh ray testing only where needed.
 
-Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. Define the roofless base region as the rectangle `x=24..39, z=24..39`, with the complete perimeter boundary blocked except one fixed west-side Exit Door socket at boundary segment `(24,31)`. Its portal pair is outside cell `(23,31)` and inside cell `(24,31)`. Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
+Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. Define the roofless base region as the rectangle `x=24..39, z=24..39`, with the complete perimeter boundary closed except one fixed west-side Exit Door. **Team decision (24 Nov 2026): the door is 2 cells wide**, with crossings `(23,31)→(24,31)` and `(23,32)→(24,32)`; the gate model is drawn at scale 2 (2 m × 2.16 m). Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
 
-`scene.json` must render the fixed boundary around this region with a visible 1 m doorway opening at the socket, terrain across the navigable map and markers/models for both deposits. The region has no floor/roof obstruction that prevents movement; floor modules are visual only. Placement is allowed in the interior/exterior zones specified by each building definition. The first Exit Door may be built from the exterior access cell before any indoor access exists.
+`scene.json` must render the fixed boundary around this region with a visible doorway opening exactly as wide as the door crossings, terrain across the navigable map and markers/models for both deposits. The region has no floor/roof obstruction that prevents movement; floor modules are visual only. Placement is allowed in the interior/exterior zones specified by each building definition. The first Exit Door may be built from the exterior access cell before any indoor access exists.
 
 ### C6. Work and needs
 
@@ -731,7 +731,11 @@ TJE_Framework/
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
 │   │   ├── arkfall_types.h                 [N: records/enums/commands]
-│   │   ├── json_data.h / .cpp                [N: JSON validation/helpers]
+│   │   ├── json_data.h / .cpp                [N: JSON validation/helpers — done]
+│   │   ├── world_transform.h / .cpp          [N: matrix/yaw conventions — done]
+│   │   ├── surface_height_map.h / .cpp       [N: visual floor height — done]
+│   │   ├── fixed_step_clock.h                [N: 1/30 s accumulator — done]
+│   │   ├── asset_catalog_resources.cpp       [N: GPU half of AssetCatalog — done]
 │   │   ├── scenario_loader.h / .cpp           [N: scenario + catalog loading]
 │   │   ├── colony_simulation.h / .cpp       [N: gameplay]
 │   │   ├── navigation_grid.h / .cpp         [N: occupancy/BFS]
@@ -763,9 +767,15 @@ TJE_Framework/
 │   │   ├── arkfall_lit.fs                  [N]
 │   │   └── flat.fs                         [E]
 │   └── audio/*.wav                         [N: delivery gate]
-└── tests/
-    ├── navigation_tests.cpp                [N]
-    └── simulation_tests.cpp                [N]
+├── tools/
+│   └── generate_arkfall_scene.py           [N: scene.json from scenario.json — done]
+└── tests/                                  [N: arkfall_tests target + ctest — done]
+    ├── test_harness.h / test_main.cpp      [N: done]
+    ├── json_data_tests.cpp, world_transform_tests.cpp,
+    │   timing_and_surface_tests.cpp,
+    │   shipped_data_tests.cpp              [N: done]
+    ├── navigation_tests.cpp                [N: P03]
+    └── simulation_tests.cpp                [N: P05+]
 ```
 
 Keep new gameplay sources directly in `src/game`, which existing CMake already scans. Add an explicit test target outside that glob. Pin and vendor the single-header `nlohmann/json` dependency under `libraries/nlohmann_json/`, record its exact version and license, and include it through CMake. Do not hand-roll JSON tokenization or use the framework `TextParser` for JSON.
@@ -858,7 +868,7 @@ Do not add features solely because a lecture contains a snippet. Reuse is mandat
 
 ### Shared build and validation procedure
 
-Run from `repo_compartido/TJE_Framework`:
+Run from `repo_compartido/TJE_Framework` (tests: `cmake --build build/arkfall_mvp --config Debug --target arkfall_tests` then `ctest --test-dir build/arkfall_mvp -C Debug --output-on-failure`; scene/scenario consistency: `python tools/generate_arkfall_scene.py --check`):
 
 ```powershell
 cmake -S . -B build/arkfall_mvp -G "Visual Studio 17 2022" -A x64
@@ -929,6 +939,16 @@ Use uniform asset scaling initially; this keeps the existing basic vertex shader
 
 **First observable result:** one colonist walks between a mine access point, the Exit Door and Storage. This follows the risk-first instruction in MVP p. 2.
 
+**Already in place before P03 (24 Nov 2026):**
+
+- `data/arkfall/scenario.json` (schema 1) exists and is the source of truth for the grid (`64×64`, 1 m, origin `[-32,-32]`), the interior rectangle, `base.exitDoors[]` (id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell — deposit cells block), `staticBlockers[]` (id, inclusive `min`/`max` cell rectangle), `initialColonists[]` (id, job, cell, needs) and the temporary `debugRoute` (colonist id, `loop`, labelled stop cells). P03 writes the strict C++ `ScenarioLoader` for exactly this schema using `json_data` (`readIntPair`, `readInteger`, `readFloatInRange`, `validateKeys`, `checkSchemaVersion`).
+- Scripted route stops: iron mine access `(9,12)` (east of the iron deposit `(8,12)`), door crossing `(23,31)→(24,31)`, Storage access `(32,33)` (west of the 2×2 `storage_preview` footprint `(33..34, 32..33)`). The colonist starts at `(18,31)`.
+- Static blockers are only the two deposits and the two placeholder machines; their scene instances are centred on their footprints. `tools/generate_arkfall_scene.py` regenerates `scene.json` from `scenario.json` + `assets.json`, re-checks these rules and runs a BFS over the debug route; `--check` fails if the files diverge.
+- `scene.json` contains no colonist. Spawn colonists with `ColonyWorld::createDynamicView(assetId, materialId)` after adding the colonist asset to the set passed to `AssetCatalog::loadReferencedAssets()`; move them every frame with `setDynamicViewPose(id, gameplayPosition, yaw)` and remove them with `destroyDynamicView(id)`. Views sharing asset/material are drawn as one instanced group. `setDynamicViewPose` adds the visual floor height (0.1 m indoors) from `walkableSurface` assets; gameplay stays at y = 0.
+- Use `world_transform::yawFromDirection(dx, dz)` for facing; `forwardAxis` from `assets.json` is applied automatically.
+- `Game::update` runs the camera on real time and calls `Game::fixedUpdate(1/30 s)` 0–8 times per frame through `FixedStepClock` (0.25 s clamp, backlog dropped, pause support). Put `ColonySimulation::tick` in `fixedUpdate` and the view sync after the step loop in `update`; use `simulation_clock.getSimulationTime()` for gameplay time.
+- The `arkfall_tests` target compiles only headless sources listed in `ARKFALL_HEADLESS_SOURCES`; add `navigation_grid.cpp`, `scenario_loader.cpp` and `colony_simulation.cpp` there and put the navigation checks in `tests/navigation_tests.cpp`.
+
 **Changes:**
 
 1. Implement strict `scenario.json` parsing/validation and one shared cell↔world coordinate conversion for grid, camera picking, placement preview and visuals.
@@ -956,7 +976,9 @@ while remaining > 0 and route has next point:
 
 **Acceptance:** an obstructed route detours; a sealed boundary cannot be crossed; failed searches return empty routes; movement does not overshoot.
 
-**Data acceptance:** loading rejects wrong schema versions, duplicate/out-of-bounds cells, missing portals, impossible spawn cells, and any scene blocker inconsistent with scenario occupancy. Scenario load failure leaves no partial simulation/world.
+**Navigation contract:** `NavigationGrid` holds per-cell `blocked` and `zone` (inside/outside) plus the door crossings; `canStep(a, b)` requires both cells in bounds and unblocked, and when the zones differ the edge must be a crossing of an open door. A closed door seals the boundary; no wall cell is ever blocked.
+
+**Data acceptance:** loading rejects wrong schema versions, duplicate/out-of-bounds cells, missing portals, non-adjacent or non-contiguous door crossings, crossings whose `outside`/`inside` zones are wrong, impossible spawn cells, and any scene blocker inconsistent with scenario occupancy. Scenario load failure leaves no partial simulation/world.
 
 **Automated checks:** start=goal, unreachable goal, narrow doorway, obstacle detour and repeated searches.
 

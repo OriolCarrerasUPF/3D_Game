@@ -1,7 +1,7 @@
 #pragma once
 
 #include "data_load_error.h"
-#include "graphics/material.h"
+#include "framework/framework.h"
 
 #include <filesystem>
 #include <map>
@@ -27,6 +27,9 @@ struct AssetDefinition
 	// Bounds transformed once by default_scale and pivot_offset during catalog load.
 	Vector3 picking_bounds_min = Vector3(0.0f, 0.0f, 0.0f);
 	Vector3 picking_bounds_max = Vector3(0.0f, 0.0f, 0.0f);
+	// Visual-only: instances of this asset define the height colonists are drawn at
+	// (terrain, interior floor modules). Never used as gameplay collision.
+	bool walkable_surface = false;
 	bool load_failure_is_fatal = true;
 	Mesh* mesh = nullptr; // borrowed from the framework's Mesh cache
 };
@@ -43,6 +46,9 @@ struct AssetCatalogLoadResult
 	explicit operator bool() const { return !error.has_value(); }
 };
 
+// load() is headless (JSON + filesystem only, asset_catalog.cpp).
+// loadReferencedAssets() needs an OpenGL context (asset_catalog_resources.cpp); it is
+// additive and may be called again later for dynamic-view assets.
 class AssetCatalog
 {
 public:
@@ -57,6 +63,7 @@ public:
 	Shader* getInstancedShader() const { return instanced_shader; }
 
 private:
+	std::filesystem::path assets_path;
 	std::filesystem::path data_root;
 	std::filesystem::path arkfall_root;
 	std::filesystem::path standard_vertex_path;

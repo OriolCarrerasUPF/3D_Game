@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "grid": {
+    "width": 64,
+    "height": 64,
+    "cellSize": 1.0,
+    "originXZ": [-32.0, -32.0]
+  },
+  "base": {
+    "interior": { "min": [24, 24], "max": [39, 39] },
+    "exitDoors": [
+      {
+        "id": "west_door",
+        "openAtStart": true,
+        "crossings": [
+          { "outside": [23, 31], "inside": [24, 31] },
+          { "outside": [23, 32], "inside": [24, 32] }
+        ]
+      }
+    ]
+  },
+  "deposits": [
+    { "id": "iron_deposit", "resource": "iron", "cell": [8, 12] },
+    { "id": "copper_deposit", "resource": "copper", "cell": [55, 12] }
+  ],
+  "staticBlockers": [
+    { "id": "oxygenator_preview", "min": [29, 31], "max": [30, 32] },
+    { "id": "storage_preview", "min": [33, 32], "max": [34, 33] }
+  ],
+  "initialColonists": [
+    {
+      "id": 1,
+      "job": "engineer",
+      "cell": [18, 31],
+      "needs": { "hunger": 100, "thirst": 100, "oxygen": 100 }
+    }
+  ],
+  "debugRoute": {
+    "colonistId": 1,
+    "loop": true,
+    "stops": [
+      { "label": "iron_mine_access", "cell": [9, 12] },
+      { "label": "west_door_outside", "cell": [23, 31] },
+      { "label": "west_door_inside", "cell": [24, 31] },
+      { "label": "storage_access", "cell": [32, 33] }
+    ]
+  }
+}

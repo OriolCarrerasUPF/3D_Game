@@ -1,5 +1,18 @@
 # TJE_Framework
 
+## ARKFALL quick reference
+
+Run everything from this folder (`TJE_Framework/`) so the relative `data/...` paths resolve.
+
+```console
+cmake -S . -B build
+cmake --build build --config Debug --target TJE_Framework arkfall_tests
+ctest --test-dir build -C Debug --output-on-failure
+```
+
+* `arkfall_tests` is a headless test executable (no window/GL context). New headless gameplay sources must be added to `ARKFALL_HEADLESS_SOURCES` in `CMakeLists.txt`; tests live in `tests/`.
+* `data/arkfall/scenario.json` is the source of truth for the grid, base interior, Exit Door crossings, deposits and blockers. `data/arkfall/scene.json` is generated from it: run `python tools/generate_arkfall_scene.py` after changing the scenario or `assets.json`, and `python tools/generate_arkfall_scene.py --check` to verify both files agree.
+
 TJE Framework is a C++ layer on top of SDL and OpenGL to help create games or visual applications. It only provides the basic GPU abstraction (Meshes, Textures, Shaders, Application). It has been used for many years in the Videogame's development courses at the Universitat Pompeu Fabra.
 
 It contains the basics to do something nice:

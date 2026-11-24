@@ -9,6 +9,7 @@
 #include "framework/utils.h"
 #include "asset_catalog.h"
 #include "colony_world.h"
+#include "fixed_step_clock.h"
 
 class Game
 {
@@ -33,6 +34,8 @@ public:
 
 	AssetCatalog asset_catalog;
 	ColonyWorld colony_world;
+	// Fixed 1/30 s simulation steps; frame time clamped to 0.25 s, max 8 steps per frame.
+	FixedStepClock simulation_clock;
 	bool scene_stats_logged;
 
 	Game( int window_width, int window_height, SDL_Window* window );
@@ -40,7 +43,10 @@ public:
 
 	//main functions
 	void render( void );
+	// Called once per frame with real (wall-clock) frame time.
 	void update( double dt );
+	// Called 0..8 times per frame with the fixed simulation step (seconds).
+	void fixedUpdate( double fixed_dt );
 
 	void setMouseLocked(bool must_lock);
 
@@ -53,4 +59,7 @@ public:
 	void onGamepadButtonDown(SDL_JoyButtonEvent event);
 	void onGamepadButtonUp(SDL_JoyButtonEvent event);
 	void onResize(int width, int height);
+
+private:
+	void updateCamera(double seconds_elapsed);
 };

@@ -15,6 +15,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.5, 0.0, -0.5], "max": [0.5, 0.0, 0.5] },
+      "walkableSurface": true,
       "loadFailureIsFatal": true
     },
     {
@@ -26,6 +27,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.2415919, 0.0, -0.2], "max": [0.2415919, 0.7931839, 0.13] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     },
     {
@@ -33,10 +35,11 @@
       "modelPath": "models/gate_simple.obj",
       "materialPath": "models/gate_simple.mtl",
       "materialId": "architecture",
-      "scale": [4.0, 4.0, 4.0],
+      "scale": [1.0, 1.0, 1.0],
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.5, 0.0, -0.25], "max": [0.5, 1.08, 0.25] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     },
     {
@@ -48,6 +51,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.4232051, 0.0, -0.257735], "max": [0.2232051, 0.6, 0.257735] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     },
     {
@@ -59,6 +63,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-1.0, 0.0, -1.0], "max": [1.0, 0.1, 1.0] },
+      "walkableSurface": true,
       "loadFailureIsFatal": true
     },
     {
@@ -70,6 +75,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.2750001, 0.0, -0.2482051], "max": [0.275, 0.35, 0.2482051] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     },
     {
@@ -81,6 +87,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.3716288, 0.0, -0.4715883], "max": [0.4298539, 0.3, 0.3793523] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     },
     {
@@ -92,6 +99,7 @@
       "pivotOffset": [0.0, 0.0, 0.0],
       "forwardAxis": "+Z",
       "pickingBounds": { "min": [-0.5, 0.0, -0.5], "max": [-0.4, 0.8, 0.5] },
+      "walkableSurface": false,
       "loadFailureIsFatal": true
     }
   ]
