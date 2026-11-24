@@ -22,9 +22,10 @@ void ColonySimulation::reset()
 	initialized = false;
 }
 
-bool ColonySimulation::initialize(const ScenarioDefinition& definition, const ColonistCatalog& roles, std::string& error)
+bool ColonySimulation::initialize(const ScenarioDefinition& definition, const GameDefinitions& definitions, std::string& error)
 {
 	reset();
+	const ColonistCatalog& roles = definitions.colonists;
 	std::vector<ColonistRecord> new_colonists;
 	for (const InitialColonistDefinition& initial : definition.initial_colonists)
 	{
@@ -326,6 +327,56 @@ void ColonySimulation::clearDebugObstacles()
 	for (const auto& [x, z] : debug_obstacles)
 		grid.setBlocked(Cell{ x, z }, false);
 	debug_obstacles.clear();
+}
+
+CommandResult ColonySimulation::apply(const GameCommand& command)
+{
+	CommandResult result;
+	auto finish = [&result](bool accepted, const std::string& code, const std::string& detail) {
+		result.accepted = accepted;
+		result.code = code;
+		result.detail = detail;
+		return result;
+	};
+	if (!initialized)
+		return finish(false, "not_initialized", "the simulation has not started");
+
+	switch (command.kind)
+	{
+	case CommandKind::PlaceDebugObstacleAhead:
+	{
+		if (!findColonist(command.colonist))
+			return finish(false, "unknown_colonist", "unknown colonist " + std::to_string(command.colonist));
+		std::string reason;
+		Cell cell;
+		if (!placeDebugObstacleAhead(command.colonist, cell, reason))
+			return finish(false, "no_free_cell", "no obstacle placed: " + reason);
+		result.cell = cell;
+		return finish(true, "ok", "debug obstacle at " + cellText(cell) + ": the colonist must detour");
+	}
+	case CommandKind::ToggleDebugObstacle:
+	{
+		result.cell = command.cell;
+		const bool was_obstacle = debug_obstacles.count({ command.cell.x, command.cell.z }) != 0;
+		std::string reason;
+		if (!toggleDebugObstacle(command.cell, reason))
+			return finish(false, "cell_refused", reason);
+		return finish(true, "ok", (was_obstacle ? "debug obstacle removed at " : "debug obstacle at ") + cellText(command.cell));
+	}
+	case CommandKind::ClearDebugObstacles:
+	{
+		const std::size_t count = debug_obstacles.size();
+		clearDebugObstacles();
+		return finish(true, "ok", std::to_string(count) + " debug obstacle(s) removed");
+	}
+	case CommandKind::SetDoorOpen:
+	{
+		if (!setDoorOpen(command.index, command.flag))
+			return finish(false, "unknown_door", "unknown Exit Door " + std::to_string(command.index));
+		return finish(true, "ok", command.flag ? "Exit Door opened" : "Exit Door closed: the base is sealed");
+	}
+	}
+	return finish(false, "unknown_command", "unknown command");
 }
 
 bool ColonySimulation::setDoorOpen(std::size_t door_index, bool open)

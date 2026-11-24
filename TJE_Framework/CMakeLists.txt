@@ -166,6 +166,9 @@ set(ARKFALL_HEADLESS_SOURCES
     ${DIR_SOURCES}/game/scenario_loader.cpp
     ${DIR_SOURCES}/game/colonist_catalog.cpp
     ${DIR_SOURCES}/game/colony_simulation.cpp
+    ${DIR_SOURCES}/game/strategy_camera.cpp
+    ${DIR_SOURCES}/game/picking.cpp
+    ${DIR_SOURCES}/game/colony_ui.cpp
 )
 file(GLOB ARKFALL_TEST_SOURCES CONFIGURE_DEPENDS ${DIR_ROOT}/tests/*.cpp ${DIR_ROOT}/tests/*.h)
 

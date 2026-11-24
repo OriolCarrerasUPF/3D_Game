@@ -38,7 +38,7 @@ namespace
 		return result.scenario;
 	}
 
-	ColonistCatalog makeRoles(float speed)
+	GameDefinitions makeDefinitions(float speed)
 	{
 		const std::filesystem::path path = std::filesystem::temp_directory_path() / "arkfall_test_colonists.json";
 		{
@@ -48,20 +48,20 @@ namespace
 				{ "job": "miner", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( },
 				{ "job": "farmer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( } ] })";
 		}
-		ColonistCatalog roles;
-		const ColonistCatalogLoadResult result = roles.load(path);
+		GameDefinitions definitions;
+		const ColonistCatalogLoadResult result = definitions.colonists.load(path);
 		if (!result)
 			test::fail(__FILE__, __LINE__, result.error->describe());
 		std::error_code ec;
 		std::filesystem::remove(path, ec);
-		return roles;
+		return definitions;
 	}
 
 	ColonySimulation makeSimulation(float speed = 2.0f, bool loop = true)
 	{
 		ColonySimulation simulation;
 		std::string error;
-		if (!simulation.initialize(makeScenario(true, loop), makeRoles(speed), error))
+		if (!simulation.initialize(makeScenario(true, loop), makeDefinitions(speed), error))
 			test::fail(__FILE__, __LINE__, error);
 		return simulation;
 	}
@@ -245,10 +245,51 @@ TEST_CASE("simulation: without a debug route the colonist stays idle")
 {
 	ColonySimulation simulation;
 	std::string error;
-	CHECK(simulation.initialize(makeScenario(false), makeRoles(2.0f), error));
+	CHECK(simulation.initialize(makeScenario(false), makeDefinitions(2.0f), error));
 	for (int tick = 0; tick < 60; ++tick)
 		simulation.tick(1.0f / 30.0f);
 	const ColonistRecord& c = *simulation.findColonist(1);
 	CHECK(c.state == ColonistState::Idle);
 	CHECK(c.last_cell == (Cell{ 2, 7 }));
+}
+
+TEST_CASE("simulation: debug commands return structured results")
+{
+	ColonySimulation simulation = makeSimulation(1.0f);
+	simulation.tick(1.0f / 30.0f); // plans the first leg (2,7) -> (9,7)
+
+	CommandResult result = simulation.apply(GameCommand::placeDebugObstacleAhead(1));
+	CHECK(result.accepted);
+	CHECK_EQ(result.code, std::string("ok"));
+	CHECK(simulation.getGrid().isBlocked(result.cell));
+	const Cell obstacle = result.cell;
+
+	result = simulation.apply(GameCommand::toggleDebugObstacle(obstacle));
+	CHECK(result.accepted);
+	CHECK(!simulation.getGrid().isBlocked(obstacle));
+
+	result = simulation.apply(GameCommand::placeDebugObstacleAhead(99));
+	CHECK(!result.accepted);
+	CHECK_EQ(result.code, std::string("unknown_colonist"));
+
+	result = simulation.apply(GameCommand::toggleDebugObstacle(Cell{ 4, 7 })); // door cell
+	CHECK(!result.accepted);
+	CHECK_EQ(result.code, std::string("cell_refused"));
+	CHECK(!result.detail.empty());
+
+	result = simulation.apply(GameCommand::setDoorOpen(0, false));
+	CHECK(result.accepted);
+	CHECK(!simulation.getGrid().isDoorOpen(0));
+	result = simulation.apply(GameCommand::setDoorOpen(5, true));
+	CHECK(!result.accepted);
+	CHECK_EQ(result.code, std::string("unknown_door"));
+
+	CHECK(simulation.apply(GameCommand::toggleDebugObstacle(Cell{ 0, 15 })).accepted);
+	result = simulation.apply(GameCommand::clearDebugObstacles());
+	CHECK(result.accepted);
+	CHECK(simulation.getDebugObstacles().empty());
+	CHECK(!simulation.getGrid().isBlocked(Cell{ 0, 15 }));
+
+	ColonySimulation empty;
+	CHECK_EQ(empty.apply(GameCommand::clearDebugObstacles()).code, std::string("not_initialized"));
 }

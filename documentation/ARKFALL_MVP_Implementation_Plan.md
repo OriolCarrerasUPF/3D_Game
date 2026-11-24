@@ -2,7 +2,7 @@
 
 **Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04)  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01, P02 and P03 are implemented (P03 results in [P03_navigation_report.md](P03_navigation_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md), and the plan review of the same day is summarised in the next section.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P04 are implemented (step reports: [P03_navigation_report.md](P03_navigation_report.md), [P04_camera_ui_report.md](P04_camera_ui_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md), and the plan review of the same day is summarised in the next section.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
@@ -30,8 +30,9 @@ The whole plan was re-checked against the MVP Scope, the GDD and the code on `ma
 | P01 | Done, one item moved | Unified exit path, `Game::~Game`, wheel reset, debug-only F5. Escape still quits the game: P04 turns it into cancel/close and P10 adds the menu. |
 | P02 | Done | [P02_asset_report.md](P02_asset_report.md), including the 24 Nov corrections (matrix order, 2-cell door, visual-only walls, generated `scene.json`). |
 | P03 | Done | [P03_navigation_report.md](P03_navigation_report.md); 52 headless test cases pass in Debug. |
-| P04 | Next | See the corrected change list. |
-| P05–P11 | Pending | — |
+| P04 | Done | [P04_camera_ui_report.md](P04_camera_ui_report.md); 69 headless test cases pass in Debug. |
+| P05 | Next | — |
+| P06–P11 | Pending | — |
 
 ### Corrections made by this review
 
@@ -782,7 +783,8 @@ TJE_Framework/
 │   ├── main.cpp                           [M: unified shutdown — done P01; --scenario P05]
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
-│   │   ├── arkfall_types.h                 [N: IDs, Cell, Zone, DoorPortal, Job, states — P03; commands P04]
+│   │   ├── arkfall_types.h                 [N: IDs, Cell, Zone, DoorPortal, Job, states, commands — done]
+│   │   ├── game_definitions.h              [N: catalog grouping — done P04; buildings P05]
 │   │   ├── data_load_error.h               [N: file + JSON pointer + message — done]
 │   │   ├── json_data.h / .cpp              [N: shared JSON helpers — done]
 │   │   ├── asset_catalog.h / .cpp          [N: assets/materials JSON, headless — done]
@@ -796,12 +798,15 @@ TJE_Framework/
 │   │   ├── fixed_step_clock.h              [N: 1/30 s accumulator — done]
 │   │   ├── world_transform.h / .cpp        [N: matrix and yaw conventions — done]
 │   │   ├── surface_height_map.h / .cpp     [N: visual floor height — done]
-│   │   ├── colony_world.h / .cpp           [N: EntityMesh, views, overlay; syncVisuals P04]
-│   │   ├── strategy_camera.h / .cpp        [N: P04]
-│   │   └── colony_ui.h / .cpp              [N: P04 onward]
+│   │   ├── colony_world.h / .cpp           [N: EntityMesh, views, overlays, syncVisuals, picking — done P04]
+│   │   ├── strategy_camera.h / .cpp        [N: orbit camera — done P04]
+│   │   ├── picking.h / .cpp                [N: ray/box/plane tests — done P04]
+│   │   ├── colony_ui.h / .cpp              [N: HUD state, layout, hit testing (headless) — P04 onward]
+│   │   └── colony_ui_render.h / .cpp       [N: HUD drawing (OpenGL) — P04 onward]
 │   ├── framework/
 │   │   ├── entities/entity.h / .cpp         [E]
 │   │   ├── input.cpp                       [M: wheel reset — done]
+│   │   ├── utils.h / .cpp                  [M: measureTextWidth — done P04]
 │   │   └── audio.cpp                       [M: cleanup/failure handling — P11]
 │   └── graphics/
 │       └── mesh.cpp                        [M: bounded MTL/OBJ handling — done]
@@ -830,6 +835,7 @@ TJE_Framework/
     ├── json_data, world_transform, timing_and_surface,
     │   shipped_data tests                  [N: done]
     ├── navigation, scenario, simulation tests [N: done P03]
+    ├── camera_and_picking, ui tests        [N: done P04]
     └── building, production, survival, construction,
         economy and outcome tests           [N: P05–P11]
 ```
@@ -1072,7 +1078,7 @@ while remaining > 0 and route has next point:
 
 **Covers:** MVP-02, MVP-03, MVP-15 foundation.  
 **Dependencies:** P03.  
-**Status:** next.
+**Status:** done; see [P04_camera_ui_report.md](P04_camera_ui_report.md). `ColonyUI` is split into a headless `ColonyUI` (state, layout, hit testing) and an OpenGL `ColonyUIRenderer`.
 
 **Files:** new `TJE_Framework/src/game/strategy_camera.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`; modified `TJE_Framework/src/game/game.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp` (view sync and picking), `TJE_Framework/src/game/colony_simulation.h/.cpp` (command queue), `TJE_Framework/src/game/arkfall_types.h` (`GameCommand`, `CommandResult`).
 
@@ -1102,7 +1108,8 @@ Use the current `Camera::getRayDirection` implementation and verify whether the 
 ### P05 — Establish inventory and the first playable production loop
 
 **Covers:** MVP-06, MVP-09 and part of MVP-10.  
-**Dependencies:** P04.
+**Dependencies:** P04.  
+**Status:** next.
 
 **Files:** new `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/data/arkfall/buildings.json`, `TJE_Framework/data/arkfall/dev/production.json`, `TJE_Framework/tests/building_tests.cpp`, `TJE_Framework/tests/production_tests.cpp`; modified `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/main.cpp` (`--scenario`), `TJE_Framework/data/arkfall/{assets,colonists,scenario}.json`, the needed building model copies and `TJE_Framework/tools/generate_arkfall_scene.py`.
 
@@ -1296,7 +1303,7 @@ Do not copy example shader/picking signatures from the slides without checking c
 | **H4 — Complete gameplay MVP** | P09–P10 | Grow population, win, lose and restart through UI. |
 | **H5 — Academic delivery** | P11 | Sound, completeness, Release validation and distributable package. |
 
-**Status (24 Nov 2026):** H0 complete; H1 half complete (P03 done, P04 next).
+**Status (24 Nov 2026):** H0 and H1 complete (P01–P04); H2 starts with P05.
 
 **Critical path:** navigation → reservations/task interruption → survival/services → construction → complete economy → population/outcomes.
 
@@ -1304,7 +1311,7 @@ Asset detailing, richer animation and advanced rendering must not delay H1–H4.
 
 ### E2. Automated checks worth implementing
 
-Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 52 cases after P03, covering data loading, shipped data, transforms/timing, navigation and P03 movement.
+Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 69 cases after P04, covering data loading, shipped data, transforms/timing, navigation, P03 movement, commands, camera, picking and UI input.
 
 | Test group | Essential cases |
 |---|---|

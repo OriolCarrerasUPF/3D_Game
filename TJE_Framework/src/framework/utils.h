@@ -17,6 +17,8 @@ bool readFile(const std::string& filename, std::string& content);
 //generic purposes fuctions
 void drawGrid();
 bool drawText(float x, float y, std::string text, Vector3 c, float scale = 1);
+// Width in pixels that drawText would use for `text` at `scale` (stb_easy_font metrics).
+float measureTextWidth(const std::string& text, float scale = 1);
 
 // ease functions
 double easeInCubic(double t);

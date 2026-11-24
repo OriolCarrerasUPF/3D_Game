@@ -2,12 +2,12 @@
 
 // Fixed-timestep accumulator for the colony simulation (plan section C4), headless.
 //
-// Real frame time is clamped to max_frame_seconds (0.25 s) before it is accumulated,
-// and at most max_steps_per_frame (8) fixed steps of step_seconds (1/30 s) run per
-// frame. Backlog that still remains after the step budget is dropped so a slow frame
-// can never cause a spiral of death. Pausing stops accumulation; camera and UI keep
-// using real frame time. Game::time is wall-clock based: simulation code must use
-// getSimulationTime() instead.
+// Real frame time is clamped to max_frame_seconds (0.25 s), multiplied by the game
+// speed (time scale, GDD -/+ controls) and accumulated; at most max_steps_per_frame (8)
+// fixed steps of step_seconds (1/30 s) run per frame. Backlog that still remains after
+// the step budget is dropped so a slow frame can never cause a spiral of death.
+// Pausing stops accumulation; camera and UI keep using real frame time. Game::time is
+// wall-clock based: simulation code must use getSimulationTime() instead.
 
 #include <cmath>
 
@@ -37,7 +37,7 @@ public:
 		if (frame_seconds > max_frame_seconds)
 			frame_seconds = max_frame_seconds;
 
-		accumulator += frame_seconds;
+		accumulator += frame_seconds * time_scale;
 		int steps = 0;
 		while (accumulator >= step_seconds && steps < max_steps_per_frame)
 		{
@@ -56,13 +56,18 @@ public:
 	void setPaused(bool must_pause) { paused = must_pause; }
 	bool isPaused() const { return paused; }
 
-	// Restart: clears accumulated time and counters, keeps the configuration.
+	// Game speed multiplier (1 = normal). Negative or non-finite values become 0.
+	void setTimeScale(double scale) { time_scale = (std::isfinite(scale) && scale > 0.0) ? scale : 0.0; }
+	double getTimeScale() const { return time_scale; }
+
+	// Restart: clears accumulated time, counters, pause and speed; keeps the step configuration.
 	void reset()
 	{
 		accumulator = 0.0;
 		total_steps = 0;
 		dropped_seconds = 0.0;
 		paused = false;
+		time_scale = 1.0;
 	}
 
 	double getStepSeconds() const { return step_seconds; }
@@ -81,5 +86,6 @@ private:
 	double accumulator = 0.0;
 	long long total_steps = 0;
 	double dropped_seconds = 0.0;
+	double time_scale = 1.0;
 	bool paused = false;
 };

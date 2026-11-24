@@ -14,7 +14,7 @@
 // pathfinding. ColonistState keeps the full C6.1 list; P03 uses Idle/MovingToWork.
 
 #include "arkfall_types.h"
-#include "colonist_catalog.h"
+#include "game_definitions.h"
 #include "navigation_grid.h"
 #include "scenario_loader.h"
 
@@ -62,7 +62,7 @@ public:
 
 	// Builds the grid and colonists. Fails (and leaves the simulation empty) if a
 	// colonist's job has no role definition.
-	bool initialize(const ScenarioDefinition& scenario, const ColonistCatalog& roles, std::string& error);
+	bool initialize(const ScenarioDefinition& scenario, const GameDefinitions& definitions, std::string& error);
 	void reset();
 
 	// One fixed simulation step (seconds).
@@ -75,7 +75,11 @@ public:
 	double getSimulationTime() const { return simulation_time; }
 	bool isInitialized() const { return initialized; }
 
-	// ---- P03 debug commands (applied immediately, between ticks) -----------
+	// Applies one player/debug command against the current state (plan C4/C6.1).
+	// Game calls it once per frame for every queued command, FIFO, before the ticks.
+	CommandResult apply(const GameCommand& command);
+
+	// ---- P03 debug command implementations (used by apply and by tests) ------
 	// Blocks a free cell a few steps ahead on the colonist's current route to show the
 	// detour. Never blocks door cells, route goals or cells a colonist stands on/enters.
 	bool placeDebugObstacleAhead(ColonistId id, Cell& out_cell, std::string& reason);

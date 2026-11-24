@@ -15,6 +15,17 @@
     { "id": "debug_blocked", "tint": [0.9, 0.15, 0.1, 0.45] },
     { "id": "debug_door_open", "tint": [0.2, 0.95, 0.35, 0.55] },
     { "id": "debug_door_closed", "tint": [1.0, 0.55, 0.0, 0.55] },
-    { "id": "debug_path", "tint": [0.25, 0.8, 1.0, 1.0] }
+    { "id": "debug_path", "tint": [0.25, 0.8, 1.0, 1.0] },
+    { "id": "ui_panel", "tint": [0.07, 0.08, 0.11, 0.84] },
+    { "id": "ui_button", "tint": [0.2, 0.23, 0.3, 0.95] },
+    { "id": "ui_button_hover", "tint": [0.3, 0.36, 0.47, 0.95] },
+    { "id": "ui_button_active", "tint": [0.82, 0.42, 0.14, 0.95] },
+    { "id": "ui_bar_back", "tint": [0.2, 0.2, 0.23, 0.95] },
+    { "id": "ui_need_hunger", "tint": [0.92, 0.62, 0.24, 1.0] },
+    { "id": "ui_need_thirst", "tint": [0.3, 0.64, 0.96, 1.0] },
+    { "id": "ui_need_oxygen", "tint": [0.55, 0.92, 0.95, 1.0] },
+    { "id": "ui_selection", "tint": [1.0, 0.93, 0.3, 1.0] },
+    { "id": "ui_ghost_valid", "tint": [0.25, 0.95, 0.4, 0.45] },
+    { "id": "ui_ghost_invalid", "tint": [0.95, 0.25, 0.2, 0.45] }
   ]
 }

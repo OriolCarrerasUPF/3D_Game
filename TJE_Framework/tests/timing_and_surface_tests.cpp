@@ -87,3 +87,22 @@ TEST_CASE("surface_height_map: highest surface wins and clear resets")
 	heights.addSurface(1.0f, 1.0f, 0.0f, 0.0f, 1.0f); // inverted rectangle is ignored
 	CHECK_EQ(heights.getBucketCount(), static_cast<std::size_t>(0));
 }
+
+TEST_CASE("fixed_step_clock: game speed multiplies simulated time")
+{
+	FixedStepClock clock(0.05, 0.25, 8);
+	clock.setTimeScale(2.0);
+	CHECK_EQ(clock.advance(0.1), 4);               // 0.1 s real = 0.2 s simulated
+	CHECK_NEAR(clock.getSimulationTime(), 0.2, 1e-9);
+	clock.setTimeScale(3.0);
+	CHECK_EQ(clock.advance(1.0), 8);               // clamp 0.25 s * 3 = 15 steps due, 8 allowed
+	CHECK(clock.getDroppedSeconds() > 0.0);
+	clock.setTimeScale(-1.0);
+	CHECK_NEAR(clock.getTimeScale(), 0.0, 1e-12);
+	CHECK_EQ(clock.advance(0.2), 0);
+	clock.setTimeScale(std::numeric_limits<double>::quiet_NaN());
+	CHECK_NEAR(clock.getTimeScale(), 0.0, 1e-12);
+	clock.reset();
+	CHECK_NEAR(clock.getTimeScale(), 1.0, 1e-12);
+	CHECK(!clock.isPaused());
+}

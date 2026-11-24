@@ -11,7 +11,8 @@ ctest --test-dir build -C Debug --output-on-failure
 ```
 
 * `arkfall_tests` is a headless test executable (no window/GL context). New headless gameplay sources must be added to `ARKFALL_HEADLESS_SOURCES` in `CMakeLists.txt`; tests live in `tests/`.
-* Debug keys (P03): F3 navigation overlay, F4 obstacle ahead of the colonist, F6 clear obstacles, F7 open/close the Exit Door.
+* Controls (P04): WASD/arrows pan, Q/E or middle-drag rotate, mouse wheel zoom, left click selects a colonist, B build mode (R rotates the ghost), Space pause, -/+ game speed, Esc or right click cancels/closes. Escape does not quit: close the window.
+* Debug keys: F3 navigation overlay, F4 obstacle ahead of the selected (or scripted) colonist, F6 clear obstacles, F7 open/close the Exit Door, F8 edge scrolling, F5 shader reload (Debug builds).
 * `data/arkfall/scenario.json` is the source of truth for the grid, base interior, Exit Door crossings, deposits and blockers. `data/arkfall/scene.json` is generated from it: run `python tools/generate_arkfall_scene.py` after changing the scenario or `assets.json`, and `python tools/generate_arkfall_scene.py --check` to verify both files agree.
 
 TJE Framework is a C++ layer on top of SDL and OpenGL to help create games or visual applications. It only provides the basic GPU abstraction (Meshes, Textures, Shaders, Application). It has been used for many years in the Videogame's development courses at the Universitat Pompeu Fabra.

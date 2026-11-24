@@ -174,6 +174,13 @@ bool drawText(float x, float y, std::string text, Vector3 c, float scale )
 	return true;
 }
 
+float measureTextWidth(const std::string& text, float scale)
+{
+	if (text.empty())
+		return 0.0f;
+	return static_cast<float>(stb_easy_font_width(const_cast<char*>(text.c_str()))) * scale;
+}
+
 double easeInCubic(double t)
 {
 	return t * t * t;

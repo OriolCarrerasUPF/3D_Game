@@ -6,6 +6,7 @@
 #include "test_harness.h"
 
 #include "game/asset_catalog.h"
+#include "game/colony_ui.h"
 #include "game/json_data.h"
 #include "game/scene_parser.h"
 
@@ -174,5 +175,17 @@ TEST_CASE("shipped data: exit gate width matches its door crossings")
 				CHECK(!on_crossing_edge);
 			}
 		}
+	}
+}
+
+TEST_CASE("shipped data: materials.json defines every HUD and marker colour")
+{
+	ShippedData& data = shipped();
+	if (!data.ok)
+		return;
+	for (const std::string& id : ColonyUI::requiredMaterialIds())
+	{
+		if (!data.catalog.findMaterial(id))
+			test::fail(__FILE__, __LINE__, "materials.json is missing '" + id + "'");
 	}
 }

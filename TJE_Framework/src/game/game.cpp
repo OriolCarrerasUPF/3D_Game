@@ -3,20 +3,21 @@
 #include "graphics/shader.h"
 #include "graphics/mesh.h"
 #include "framework/input.h"
+#include "colony_ui_render.h"
 #include "scene_parser.h"
 #include "scenario_loader.h"
 
+#include <algorithm>
 #include <cmath>
 #include <set>
 #include <stdexcept>
 
 namespace
 {
-	const float camera_pan_speed = 30.0f;
-	const float camera_reference_pan_distance = 30.0f;
-	const float camera_zoom_step = 0.9f;
-	const float camera_min_distance = 0.0f;
-	const float camera_max_distance = 120.0f;
+	constexpr float camera_near_plane = 0.1f;
+	constexpr float camera_far_plane = 1000.0f;
+	constexpr float click_slop_pixels = 6.0f;   // a press that moves farther is not a click
+	constexpr float frame_padding_metres = 2.0f;
 }
 
 Game* Game::instance = NULL;
@@ -33,11 +34,12 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	, camera(nullptr)
 	, mouse_locked(false)
 	, asset_catalog()
-	, colony_world(asset_catalog)
+	, definitions()
+	, colony_world(asset_catalog, definitions)
 	, simulation_clock()
-	, colonist_catalog()
 	, simulation()
-	, overlay_revision(0)
+	, strategy_camera()
+	, ui()
 	, scene_stats_logged(false)
 {
 	if (!window)
@@ -49,6 +51,9 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		"data/arkfall/assets.json", "data/arkfall/materials.json");
 	if (!catalog_result)
 		throw std::runtime_error(catalog_result.error->describe());
+	for (const std::string& material_id : ColonyUI::requiredMaterialIds())
+		if (!asset_catalog.findMaterial(material_id))
+			throw std::runtime_error("data/arkfall/materials.json: missing HUD/marker material '" + material_id + "'");
 
 	// Startup order (plan C9.1): validate every JSON file and the cross-file rules
 	// before any OpenGL resource is created; then build views, then the simulation.
@@ -66,10 +71,10 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 			"data/arkfall/scene.json", blocker_error))
 		throw std::runtime_error(blocker_error.describe());
 
-	ColonistCatalogLoadResult colonist_result = colonist_catalog.load("data/arkfall/colonists.json");
+	ColonistCatalogLoadResult colonist_result = definitions.colonists.load("data/arkfall/colonists.json");
 	if (!colonist_result)
 		throw std::runtime_error(colonist_result.error->describe());
-	colonist_result = colonist_catalog.validateVisuals(asset_catalog);
+	colonist_result = definitions.colonists.validateVisuals(asset_catalog);
 	if (!colonist_result)
 		throw std::runtime_error(colonist_result.error->describe());
 
@@ -78,7 +83,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	std::set<std::string> referenced_assets;
 	for (const StaticSceneInstance& instance : scene_result.instances)
 		referenced_assets.insert(instance.asset_id);
-	for (const auto& [job, role] : colonist_catalog.getRoles())
+	for (const auto& [job, role] : definitions.colonists.getRoles())
 	{
 		(void)job;
 		referenced_assets.insert(role.asset_id);
@@ -94,14 +99,11 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		throw std::runtime_error(scene_build_error.describe());
 
 	std::string simulation_error;
-	if (!simulation.initialize(scenario_result.scenario, colonist_catalog, simulation_error))
+	if (!simulation.initialize(scenario_result.scenario, definitions, simulation_error))
 		throw std::runtime_error("scenario.json: " + simulation_error);
-	spawnColonistViews();
-	syncColonistViews(0.0f);
-	colony_world.setDebugOverlayVisible(true);
-	rebuildNavigationOverlay();
+	colony_world.syncVisuals(simulation, 0.0f);
 
-	std::cout << " + P03 debug keys: F3 overlay, F4 obstacle ahead of the colonist, F6 clear obstacles, F7 open/close Exit Door" << std::endl;
+	ui_renderer = std::make_unique<ColonyUIRenderer>(asset_catalog);
 
 	// OpenGL flags
 	glEnable(GL_CULL_FACE);
@@ -109,12 +111,18 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 
 	// Create our camera after fallible resource loading so construction failures need no GL cleanup here.
 	camera = new Camera();
-	camera->lookAt(Vector3(0.f, 18.f, 24.f), Vector3(0.f, 0.f, 0.f), Vector3(0.f, 1.f, 0.f));
-	camera->setPerspective(48.f, window_width / (float)window_height, 0.1f, 1000.f);
+	updateViewport(window_width, window_height);
+	frameInitialView();
 
-	// Hide the cursor
-	SDL_ShowCursor(!mouse_locked); //hide or show the mouse
+	// ARKFALL keeps the cursor visible and free (strategy controls).
+	SDL_ShowCursor(SDL_ENABLE);
+	SDL_SetRelativeMouseMode(SDL_FALSE);
 	instance = this;
+
+	std::cout << " + Controls: WASD/arrows pan, Q/E or middle-drag rotate, wheel zoom, left-click select, "
+		"B build mode, R rotate ghost, Space pause, -/+ speed, Esc/right-click cancel" << std::endl;
+	std::cout << " + Debug keys: F3 overlay, F4 obstacle ahead of the colonist, F6 clear obstacles, "
+		"F7 open/close Exit Door, F8 edge scrolling" << std::endl;
 }
 
 Game::~Game()
@@ -127,6 +135,283 @@ Game::~Game()
 	if (instance == this)
 		instance = nullptr;
 }
+
+// ---------------------------------------------------------------------------- viewport and camera
+
+void Game::updateViewport(int logical_width, int logical_height)
+{
+	window_width = std::max(logical_width, 1);
+	window_height = std::max(logical_height, 1);
+	// High-DPI: GL works in drawable pixels; UI, mouse and picking stay in logical pixels.
+	int drawable_width = window_width;
+	int drawable_height = window_height;
+	SDL_GL_GetDrawableSize(window, &drawable_width, &drawable_height);
+	glViewport(0, 0, std::max(drawable_width, 1), std::max(drawable_height, 1));
+	ui.layout(static_cast<float>(window_width), static_cast<float>(window_height));
+	if (camera)
+		applyCameraToFramework();
+}
+
+void Game::frameInitialView()
+{
+	// Frame the base, the deposits and the colonists (GDD 3.2: show the base and the
+	// nearest mines), computed from scenario data instead of fixed coordinates.
+	const ScenarioDefinition& scenario = simulation.getScenario();
+	const NavigationGrid& grid = simulation.getGrid();
+	const float cell = grid.getCellSize();
+	float min_x = grid.cellCenter(scenario.interior_min).x - cell * 0.5f;
+	float min_z = grid.cellCenter(scenario.interior_min).z - cell * 0.5f;
+	float max_x = grid.cellCenter(scenario.interior_max).x + cell * 0.5f;
+	float max_z = grid.cellCenter(scenario.interior_max).z + cell * 0.5f;
+	auto include = [&](Cell c) {
+		const Vector3 p = grid.cellCenter(c);
+		min_x = std::min(min_x, p.x - cell * 0.5f); max_x = std::max(max_x, p.x + cell * 0.5f);
+		min_z = std::min(min_z, p.z - cell * 0.5f); max_z = std::max(max_z, p.z + cell * 0.5f);
+	};
+	for (const DepositDefinition& deposit : scenario.deposits)
+		include(deposit.cell);
+	for (const InitialColonistDefinition& colonist : scenario.initial_colonists)
+		include(colonist.cell);
+
+	strategy_camera.setBounds(grid.getOriginX(), grid.getOriginZ(),
+		grid.getOriginX() + grid.getWidth() * cell, grid.getOriginZ() + grid.getHeight() * cell);
+	strategy_camera.frame(min_x - frame_padding_metres, min_z - frame_padding_metres,
+		max_x + frame_padding_metres, max_z + frame_padding_metres,
+		window_width / static_cast<float>(window_height));
+	applyCameraToFramework();
+}
+
+void Game::applyCameraToFramework()
+{
+	camera->lookAt(strategy_camera.getEye(), strategy_camera.getFocus(), Vector3(0.0f, 1.0f, 0.0f));
+	camera->setPerspective(strategy_camera.getSettings().vertical_fov_degrees,
+		window_width / static_cast<float>(window_height), camera_near_plane, camera_far_plane);
+}
+
+void Game::updateCamera(float real_dt)
+{
+	CameraInput input;
+	if (Input::isKeyPressed(SDL_SCANCODE_W) || Input::isKeyPressed(SDL_SCANCODE_UP)) input.pan_forward += 1.0f;
+	if (Input::isKeyPressed(SDL_SCANCODE_S) || Input::isKeyPressed(SDL_SCANCODE_DOWN)) input.pan_forward -= 1.0f;
+	if (Input::isKeyPressed(SDL_SCANCODE_D) || Input::isKeyPressed(SDL_SCANCODE_RIGHT)) input.pan_right += 1.0f;
+	if (Input::isKeyPressed(SDL_SCANCODE_A) || Input::isKeyPressed(SDL_SCANCODE_LEFT)) input.pan_right -= 1.0f;
+	if (Input::isKeyPressed(SDL_SCANCODE_E)) input.rotate += 1.0f;
+	if (Input::isKeyPressed(SDL_SCANCODE_Q)) input.rotate -= 1.0f;
+
+	// Input::mouse_delta accumulates -xrel/-yrel, so the motion is its negation.
+	if (middle_dragging)
+		input.drag_pixels.set(-Input::mouse_delta.x, -Input::mouse_delta.y);
+
+	input.zoom_notches = pending_zoom_notches;
+	pending_zoom_notches = 0.0f;
+
+	const Vector2 pointer = Input::mouse_position;
+	if (edge_scroll_enabled && !ui.isPointerOverUi(pointer.x, pointer.y) && !middle_dragging)
+	{
+		float edge_forward = 0.0f, edge_right = 0.0f;
+		StrategyCamera::edgeScrollAxes(pointer, static_cast<float>(window_width), static_cast<float>(window_height),
+			strategy_camera.getSettings().edge_scroll_margin_pixels, edge_forward, edge_right);
+		input.pan_forward += edge_forward;
+		input.pan_right += edge_right;
+	}
+
+	strategy_camera.update(input, real_dt);
+	applyCameraToFramework();
+}
+
+picking::Ray Game::makePointerRay(float x, float y) const
+{
+	picking::Ray ray;
+	ray.origin = camera->eye;
+	ray.direction = camera->getRayDirection(static_cast<int>(x), static_cast<int>(y),
+		static_cast<float>(window_width), static_cast<float>(window_height));
+	return ray;
+}
+
+// ---------------------------------------------------------------------------- frame update
+
+void Game::update(double seconds_elapsed)
+{
+	const float real_dt = static_cast<float>(seconds_elapsed);
+
+	// 1. UI hover, then the camera on real time (also while paused).
+	ui.handlePointer(PointerEvent{ PointerType::Move, PointerButton::None, Input::mouse_position.x, Input::mouse_position.y });
+	updateCamera(real_dt);
+
+	// 2. World clicks are resolved with this frame's camera matrices.
+	processWorldClick();
+	updatePlacementGhost();
+
+	// 3. Player/debug commands, once per frame, before the ticks (plan C4).
+	applyQueuedCommands();
+
+	// 4. Gameplay advances only in fixed steps.
+	const int steps = simulation_clock.advance(seconds_elapsed);
+	for (int i = 0; i < steps; ++i)
+		fixedUpdate(simulation_clock.getStepSeconds());
+
+	// 5. Views follow the simulation once per frame, interpolated between fixed steps.
+	if (ui.getSelectedColonist() != INVALID_COLONIST)
+	{
+		const ColonistRecord* selected = simulation.findColonist(ui.getSelectedColonist());
+		if (!selected || selected->state == ColonistState::Dead)
+			ui.clearSelection();
+	}
+	colony_world.setSelectedColonist(ui.getSelectedColonist());
+	colony_world.syncVisuals(simulation, static_cast<float>(simulation_clock.getInterpolationAlpha()));
+	ui.update(real_dt);
+}
+
+void Game::fixedUpdate(double fixed_dt)
+{
+	// Gameplay timing uses simulation time, never the wall-clock Game::time.
+	simulation.tick(static_cast<float>(fixed_dt));
+}
+
+void Game::processWorldClick()
+{
+	if (!pending_world_click)
+		return;
+	pending_world_click = false;
+	if (ui.isBuildMode())
+	{
+		ui.showMessage("Nothing to place yet: building types arrive with buildings.json (P05)");
+		return;
+	}
+	ColonistId id = INVALID_COLONIST;
+	float distance = 0.0f;
+	if (colony_world.pickColonist(makePointerRay(pending_click_position.x, pending_click_position.y), id, distance))
+		ui.select(id);
+	else
+		ui.clearSelection();
+}
+
+bool Game::isDoorCell(Cell cell) const
+{
+	for (const ExitDoorDefinition& door : simulation.getScenario().exit_doors)
+		for (const DoorPortal& portal : door.crossings)
+			if (portal.inside == cell || portal.outside == cell)
+				return true;
+	return false;
+}
+
+void Game::updatePlacementGhost()
+{
+	ghost_visible = false;
+	const Vector2 pointer = Input::mouse_position;
+	if (ui.isBuildMode() && !ui.isPointerOverUi(pointer.x, pointer.y))
+	{
+		Vector3 point;
+		Cell cell;
+		if (colony_world.pickGround(makePointerRay(pointer.x, pointer.y), point) &&
+			simulation.getGrid().worldToCell(point.x, point.z, cell))
+		{
+			// Temporary P04 rule until validatePlacement (P07): free, non-door cells.
+			ghost_visible = true;
+			ghost_cell = cell;
+			if (simulation.getGrid().isBlocked(cell))
+				ghost_status = "blocked";
+			else if (isDoorCell(cell))
+				ghost_status = "door crossing";
+			else
+				ghost_status = "free";
+			ghost_valid = ghost_status == "free";
+		}
+	}
+	colony_world.setPlacementGhost(ghost_visible, ghost_cell, ghost_valid, ui.getGhostQuarterTurns());
+}
+
+void Game::queueCommand(const GameCommand& command)
+{
+	command_queue.push_back(command);
+}
+
+void Game::applyQueuedCommands()
+{
+	// FIFO against the state left by the previous command; applied even while paused.
+	std::vector<GameCommand> pending;
+	pending.swap(command_queue);
+	for (const GameCommand& command : pending)
+	{
+		const CommandResult result = simulation.apply(command);
+		ui.showMessage(result.detail);
+		std::cout << (result.accepted ? " + " : " - ") << result.detail << std::endl;
+	}
+}
+
+// ---------------------------------------------------------------------------- speed, cancel, actions
+
+void Game::setSpeedLevel(int level)
+{
+	speed_level = std::clamp(level, 0, max_speed_level);
+	if (speed_level > 0)
+		resume_speed_level = speed_level;
+	simulation_clock.setPaused(speed_level == 0);
+	simulation_clock.setTimeScale(static_cast<double>(std::max(speed_level, 1)));
+}
+
+void Game::togglePause()
+{
+	setSpeedLevel(speed_level == 0 ? resume_speed_level : 0);
+}
+
+void Game::cancelCurrent(bool from_escape)
+{
+	const ColonyUI::CancelResult result = ui.cancel();
+	if (result == ColonyUI::CancelResult::Nothing && from_escape)
+		ui.showMessage("Nothing to cancel. Close the window to quit (the menu arrives in P10).");
+}
+
+void Game::handleUiAction(UiAction action)
+{
+	switch (action)
+	{
+	case UiAction::TogglePause: togglePause(); break;
+	case UiAction::SlowDown: setSpeedLevel(speed_level - 1); break;
+	case UiAction::SpeedUp: setSpeedLevel(speed_level + 1); break;
+	case UiAction::ToggleOverlay: colony_world.setDebugOverlayVisible(!colony_world.isDebugOverlayVisible()); break;
+	case UiAction::ToggleBuildMode:   // ColonyUI already switched the mode
+	case UiAction::CloseSelection:    // ColonyUI already cleared the selection
+	case UiAction::None:
+		break;
+	}
+}
+
+ColonistId Game::getDebugColonist() const
+{
+	if (ui.getSelectedColonist() != INVALID_COLONIST)
+		return ui.getSelectedColonist();
+	const ScenarioDefinition& scenario = simulation.getScenario();
+	if (scenario.debug_route)
+		return scenario.debug_route->colonist_id;
+	return simulation.getColonists().empty() ? INVALID_COLONIST : simulation.getColonists().front().id;
+}
+
+HudInfo Game::makeHudInfo() const
+{
+	HudInfo hud;
+	hud.simulation_seconds = simulation.getSimulationTime();
+	hud.paused = speed_level == 0;
+	hud.speed_level = std::max(speed_level, 1);
+	for (const ColonistRecord& colonist : simulation.getColonists())
+		hud.colonists_alive += colonist.state != ColonistState::Dead ? 1 : 0;
+	hud.has_door = simulation.getGrid().getDoorCount() > 0;
+	hud.door_open = hud.has_door && simulation.getGrid().isDoorOpen(0);
+	hud.fps = fps;
+	hud.debug_overlay = colony_world.isDebugOverlayVisible();
+	hud.edge_scroll = edge_scroll_enabled;
+	hud.navigation_revision = simulation.getGrid().getRevision();
+	if (hud.debug_overlay)
+		hud.gpu_stats = getGPUStats();
+	hud.ghost_visible = ghost_visible;
+	hud.ghost_cell = ghost_cell;
+	hud.ghost_inside = ghost_visible && simulation.getGrid().getZone(ghost_cell) == Zone::Inside;
+	hud.ghost_valid = ghost_valid;
+	hud.ghost_status = ghost_status;
+	return hud;
+}
+
+// ---------------------------------------------------------------------------- render
 
 //what to do when the image has to be draw
 void Game::render(void)
@@ -144,7 +429,7 @@ void Game::render(void)
 	glDisable(GL_BLEND);
 	glEnable(GL_DEPTH_TEST);
 	glDisable(GL_CULL_FACE);
-   
+
 	const long draw_calls_before_scene = Mesh::num_meshes_rendered;
 	colony_world.render(camera);
 #ifndef NDEBUG
@@ -162,206 +447,40 @@ void Game::render(void)
 	}
 #endif
 
-	// Render the FPS, Draw Calls, etc
-	drawText(2, 2, getGPUStats(), Vector3(1, 1, 1), 2);
+	// HUD after the 3D scene.
+	ui_renderer->render(ui, simulation, makeHudInfo());
 
 	// Swap between front buffer and back buffer
 	SDL_GL_SwapWindow(this->window);
 }
 
-void Game::update(double seconds_elapsed)
-{
-	// Camera and (later) UI use real frame time and keep working while paused.
-	updateCamera(seconds_elapsed);
-
-	// Gameplay advances only in fixed steps (plan C4).
-	const int steps = simulation_clock.advance(seconds_elapsed);
-	for (int i = 0; i < steps; ++i)
-		fixedUpdate(simulation_clock.getStepSeconds());
-
-	// Views follow the simulation once per frame, interpolated between fixed steps.
-	const float alpha = static_cast<float>(simulation_clock.getInterpolationAlpha());
-	syncColonistViews(alpha);
-	if (overlay_revision != simulation.getGrid().getRevision())
-		rebuildNavigationOverlay();
-	updatePathOverlay(alpha);
-}
-
-void Game::fixedUpdate(double fixed_dt)
-{
-	// Gameplay timing uses simulation time, never the wall-clock Game::time.
-	simulation.tick(static_cast<float>(fixed_dt));
-}
-
-void Game::spawnColonistViews()
-{
-	for (const auto& [id, view] : colonist_views)
-	{
-		(void)id;
-		colony_world.destroyDynamicView(view);
-	}
-	colonist_views.clear();
-	for (const ColonistRecord& colonist : simulation.getColonists())
-	{
-		const ColonistRoleDefinition* role = colonist_catalog.findRole(colonist.job);
-		if (!role)
-			throw std::runtime_error("colonist " + std::to_string(colonist.id) + " has no role visual");
-		DataLoadError error;
-		const DynamicViewId view = colony_world.createDynamicView(role->asset_id, role->material_id, error);
-		if (view == invalid_dynamic_view)
-			throw std::runtime_error(error.describe());
-		colonist_views[colonist.id] = view;
-	}
-}
-
-void Game::syncColonistViews(float alpha)
-{
-	for (const ColonistRecord& colonist : simulation.getColonists())
-	{
-		const auto it = colonist_views.find(colonist.id);
-		if (it == colonist_views.end())
-			continue;
-		const Vector3 position(lerp(colonist.previous_position.x, colonist.position.x, alpha), 0.0f,
-			lerp(colonist.previous_position.z, colonist.position.z, alpha));
-		const float yaw = lerpAngleRad(colonist.previous_yaw, colonist.yaw, alpha);
-		colony_world.setDynamicViewPose(it->second, position, yaw);
-	}
-}
-
-void Game::rebuildNavigationOverlay()
-{
-	const NavigationGrid& grid = simulation.getGrid();
-	overlay_revision = grid.getRevision();
-	const float half = grid.getCellSize() * 0.45f;
-	auto addCellQuad = [&](std::vector<Vector3>& out, Cell cell) {
-		const Vector3 c = grid.cellCenter(cell);
-		const float y = colony_world.getVisualGroundHeight(c.x, c.z) + 0.03f;
-		const Vector3 a(c.x - half, y, c.z - half), b(c.x + half, y, c.z - half);
-		const Vector3 d(c.x - half, y, c.z + half), e(c.x + half, y, c.z + half);
-		out.insert(out.end(), { a, b, e, a, e, d });
-	};
-
-	std::vector<Vector3> blocked;
-	for (int z = 0; z < grid.getHeight(); ++z)
-		for (int x = 0; x < grid.getWidth(); ++x)
-			if (grid.isBlocked(Cell{ x, z }))
-				addCellQuad(blocked, Cell{ x, z });
-	colony_world.setDebugLayer("blocked", "debug_blocked", ColonyWorld::DebugPrimitive::Triangles, blocked);
-
-	std::vector<Vector3> open_doors, closed_doors;
-	for (std::size_t door = 0; door < grid.getDoorCount(); ++door)
-		for (const DoorPortal& portal : grid.getDoorPortals(door))
-		{
-			std::vector<Vector3>& out = grid.isDoorOpen(door) ? open_doors : closed_doors;
-			addCellQuad(out, portal.outside);
-			addCellQuad(out, portal.inside);
-		}
-	colony_world.setDebugLayer("door_open", "debug_door_open", ColonyWorld::DebugPrimitive::Triangles, open_doors);
-	colony_world.setDebugLayer("door_closed", "debug_door_closed", ColonyWorld::DebugPrimitive::Triangles, closed_doors);
-}
-
-void Game::updatePathOverlay(float alpha)
-{
-	const NavigationGrid& grid = simulation.getGrid();
-	std::vector<Vector3> lines;
-	for (const ColonistRecord& colonist : simulation.getColonists())
-	{
-		if (colonist.route.finished())
-			continue;
-		Vector3 from(lerp(colonist.previous_position.x, colonist.position.x, alpha), 0.0f,
-			lerp(colonist.previous_position.z, colonist.position.z, alpha));
-		from.y = colony_world.getVisualGroundHeight(from.x, from.z) + 0.15f;
-		for (std::size_t i = colonist.route.next_index; i < colonist.route.cells.size(); ++i)
-		{
-			Vector3 to = grid.cellCenter(colonist.route.cells[i]);
-			to.y = colony_world.getVisualGroundHeight(to.x, to.z) + 0.15f;
-			lines.push_back(from);
-			lines.push_back(to);
-			from = to;
-		}
-	}
-	colony_world.setDebugLayer("path", "debug_path", ColonyWorld::DebugPrimitive::Lines, lines);
-}
-
-ColonistId Game::getDebugColonist() const
-{
-	const ScenarioDefinition& scenario = simulation.getScenario();
-	if (scenario.debug_route)
-		return scenario.debug_route->colonist_id;
-	return simulation.getColonists().empty() ? INVALID_COLONIST : simulation.getColonists().front().id;
-}
-
-void Game::updateCamera(double seconds_elapsed)
-{
-	const float camera_distance = static_cast<float>((camera->eye - camera->center).length());
-	const float zoom_speed_scale = camera_distance / camera_reference_pan_distance;
-	float speed = static_cast<float>(seconds_elapsed) * camera_pan_speed * zoom_speed_scale;
-
-	// Mouse input to rotate the cam
-	if (Input::isMousePressed(SDL_BUTTON_LEFT) || mouse_locked) //is left button pressed?
-	{
-		camera->rotate(-Input::mouse_delta.x * 0.005f, Vector3(0.0f,1.0f,0.0f));
-		camera->rotate(-Input::mouse_delta.y * 0.005f, camera->getLocalVector( Vector3(1.0f,0.0f,0.0f)));
-	}
-
-	// Pan on the map plane. Projecting the camera's forward direction onto XZ
-	// prevents W/S from climbing or descending when the camera looks downward.
-	Vector3 forward = camera->center - camera->eye;
-	forward.y = 0.0f;
-	if (forward.length() < 0.0001f)
-		forward.set(0.0f, 0.0f, -1.0f);
-	else
-		forward.normalize();
-	const Vector3 right = forward.cross(Vector3(0.0f, 1.0f, 0.0f)).normalize();
-
-	Vector3 pan_direction(0.0f, 0.0f, 0.0f);
-	if (Input::isKeyPressed(SDL_SCANCODE_W) || Input::isKeyPressed(SDL_SCANCODE_UP)) pan_direction += forward;
-	if (Input::isKeyPressed(SDL_SCANCODE_S) || Input::isKeyPressed(SDL_SCANCODE_DOWN)) pan_direction -= forward;
-	if (Input::isKeyPressed(SDL_SCANCODE_A) || Input::isKeyPressed(SDL_SCANCODE_LEFT)) pan_direction -= right;
-	if (Input::isKeyPressed(SDL_SCANCODE_D) || Input::isKeyPressed(SDL_SCANCODE_RIGHT)) pan_direction += right;
-
-	if (pan_direction.length() > 0.0f)
-	{
-		if (pan_direction.length() > 1.0f)
-			pan_direction.normalize();
-		pan_direction *= speed;
-		camera->eye += pan_direction;
-		camera->center += pan_direction;
-		camera->updateViewMatrix();
-	}
-}
+// ---------------------------------------------------------------------------- events
 
 //Keyboard event handler (sync input)
 void Game::onKeyDown( SDL_KeyboardEvent event )
 {
+	if (event.repeat)
+		return; // toggles react once per press
 	switch(event.keysym.sym)
 	{
-		case SDLK_ESCAPE: must_exit = true; break; //ESC key, kill the app
-		// P03 navigation debug keys (the GDD controls leave F3-F7 free).
-		case SDLK_F3:
-			colony_world.setDebugOverlayVisible(!colony_world.isDebugOverlayVisible());
-			break;
-		case SDLK_F4:
-		{
-			Cell cell;
-			std::string reason;
-			if (simulation.placeDebugObstacleAhead(getDebugColonist(), cell, reason))
-				std::cout << " + Debug obstacle at (" << cell.x << ", " << cell.z << "): the colonist must detour" << std::endl;
-			else
-				std::cout << " - No debug obstacle placed: " << reason << std::endl;
-			break;
-		}
-		case SDLK_F6:
-			simulation.clearDebugObstacles();
-			std::cout << " + Debug obstacles cleared" << std::endl;
-			break;
+		case SDLK_ESCAPE: cancelCurrent(true); break; // cancel/close; never quits (P10 adds the menu)
+		case SDLK_b: ui.setBuildMode(!ui.isBuildMode()); break;
+		case SDLK_r: if (ui.isBuildMode()) ui.rotateGhost(); break;
+		case SDLK_SPACE: togglePause(); break;
+		case SDLK_MINUS: case SDLK_KP_MINUS: setSpeedLevel(speed_level - 1); break;
+		case SDLK_PLUS: case SDLK_EQUALS: case SDLK_KP_PLUS: setSpeedLevel(speed_level + 1); break;
+		// P03 navigation debug keys (the GDD controls leave F3-F8 free); gameplay
+		// changes go through the command queue like any player order.
+		case SDLK_F3: handleUiAction(UiAction::ToggleOverlay); break;
+		case SDLK_F4: queueCommand(GameCommand::placeDebugObstacleAhead(getDebugColonist())); break;
+		case SDLK_F6: queueCommand(GameCommand::clearDebugObstacles()); break;
 		case SDLK_F7:
 			if (simulation.getGrid().getDoorCount() > 0)
-			{
-				const bool open = !simulation.getGrid().isDoorOpen(0);
-				simulation.setDoorOpen(0, open);
-				std::cout << " + Exit Door " << (open ? "opened" : "closed (the boundary is sealed)") << std::endl;
-			}
+				queueCommand(GameCommand::setDoorOpen(0, !simulation.getGrid().isDoorOpen(0)));
+			break;
+		case SDLK_F8:
+			edge_scroll_enabled = !edge_scroll_enabled;
+			ui.showMessage(edge_scroll_enabled ? "Edge scrolling on" : "Edge scrolling off");
 			break;
 		#ifndef NDEBUG
 		case SDLK_F5: Shader::ReloadAll(); break;
@@ -376,39 +495,58 @@ void Game::onKeyUp(SDL_KeyboardEvent event)
 
 void Game::onMouseButtonDown( SDL_MouseButtonEvent event )
 {
-	if (event.button == SDL_BUTTON_MIDDLE) //middle mouse
+	const float x = static_cast<float>(event.x);
+	const float y = static_cast<float>(event.y);
+	if (event.button == SDL_BUTTON_LEFT)
 	{
-		mouse_locked = !mouse_locked;
-		SDL_ShowCursor(!mouse_locked);
-		SDL_SetRelativeMouseMode((SDL_bool)(mouse_locked));
+		const UiPointerResult result = ui.handlePointer(PointerEvent{ PointerType::Down, PointerButton::Left, x, y });
+		handleUiAction(result.action);
+		world_press_active = !result.consumed;
+		world_press_position.set(x, y);
+	}
+	else if (event.button == SDL_BUTTON_MIDDLE)
+	{
+		// Middle-drag rotates the camera, unless the press starts on the UI.
+		middle_dragging = !ui.handlePointer(PointerEvent{ PointerType::Down, PointerButton::Middle, x, y }).consumed;
+	}
+	else if (event.button == SDL_BUTTON_RIGHT)
+	{
+		// GDD 3.3: right click cancels construction or closes an open menu.
+		ui.handlePointer(PointerEvent{ PointerType::Down, PointerButton::Right, x, y });
+		cancelCurrent(false);
 	}
 }
 
 void Game::onMouseButtonUp(SDL_MouseButtonEvent event)
 {
-
+	const float x = static_cast<float>(event.x);
+	const float y = static_cast<float>(event.y);
+	if (event.button == SDL_BUTTON_LEFT)
+	{
+		const UiPointerResult result = ui.handlePointer(PointerEvent{ PointerType::Up, PointerButton::Left, x, y });
+		handleUiAction(result.action);
+		const float dx = x - world_press_position.x;
+		const float dy = y - world_press_position.y;
+		if (world_press_active && !result.consumed && dx * dx + dy * dy <= click_slop_pixels * click_slop_pixels)
+		{
+			pending_world_click = true; // resolved in update() after the camera moves
+			pending_click_position.set(x, y);
+		}
+		world_press_active = false;
+	}
+	else if (event.button == SDL_BUTTON_MIDDLE)
+	{
+		middle_dragging = false;
+	}
 }
 
 void Game::onMouseWheel(SDL_MouseWheelEvent event)
 {
-	if (!camera || event.y == 0)
+	if (event.y == 0)
 		return;
-
-	const float wheel_delta = static_cast<float>(event.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.y : event.y);
-	const Vector3 eye_offset = camera->eye - camera->center;
-	const float distance = static_cast<float>(eye_offset.length());
-	if (distance <= 0.0001f)
+	if (ui.isPointerOverUi(Input::mouse_position.x, Input::mouse_position.y))
 		return;
-
-	float zoomed_distance = distance * std::pow(camera_zoom_step, wheel_delta);
-	if (zoomed_distance < camera_min_distance)
-		zoomed_distance = camera_min_distance;
-	else if (zoomed_distance > camera_max_distance)
-		zoomed_distance = camera_max_distance;
-
-	const Vector3 direction = eye_offset / distance;
-	camera->eye = camera->center + direction * zoomed_distance;
-	camera->updateViewMatrix();
+	pending_zoom_notches += static_cast<float>(event.direction == SDL_MOUSEWHEEL_FLIPPED ? -event.y : event.y);
 }
 
 void Game::onGamepadButtonDown(SDL_JoyButtonEvent event)
@@ -423,18 +561,16 @@ void Game::onGamepadButtonUp(SDL_JoyButtonEvent event)
 
 void Game::onResize(int width, int height)
 {
-    std::cout << "window resized: " << width << "," << height << std::endl;
-	glViewport( 0,0, width, height );
-	camera->aspect =  width / (float)height;
-	window_width = width;
-	window_height = height;
+	std::cout << "window resized: " << width << "," << height << std::endl;
+	updateViewport(width, height);
 }
 
 void Game::setMouseLocked(bool must_lock)
 {
-	SDL_ShowCursor(!must_lock);
-
-	SDL_SetRelativeMouseMode((SDL_bool)must_lock);
-
-	mouse_locked = must_lock;
+	// Kept for the framework interface. ARKFALL needs a free cursor for selection and
+	// the UI, so locking is refused (plan P04).
+	(void)must_lock;
+	mouse_locked = false;
+	SDL_ShowCursor(SDL_ENABLE);
+	SDL_SetRelativeMouseMode(SDL_FALSE);
 }
