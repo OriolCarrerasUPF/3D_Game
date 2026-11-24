@@ -6,6 +6,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 // ---------------------------------------------------------------------------
@@ -61,6 +62,7 @@ enum class DepositType : std::uint8_t
 
 struct DepositDefinition
 {
+	std::string id;
 	DepositType type = DepositType::Iron;
 	Cell cell;   // anchor cell; also blocks navigation
 };
@@ -68,6 +70,14 @@ struct DepositDefinition
 // ---------------------------------------------------------------------------
 // Colonists
 // ---------------------------------------------------------------------------
+
+// Colonist role (plan C2). Loaded from scenario.json / colonists.json by name.
+enum class Job : std::uint8_t
+{
+	Engineer,
+	Miner,
+	Farmer
+};
 
 // Full state list from plan C6.1. P03 only uses Idle and MovingToWork;
 // the rest are filled in from P05/P06, so this enum does not have to change later.

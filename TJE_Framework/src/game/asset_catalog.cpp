@@ -90,6 +90,7 @@ AssetCatalogLoadResult AssetCatalog::load(const std::filesystem::path& assets_fi
 	materials.clear();
 	standard_shader = nullptr;
 	instanced_shader = nullptr;
+	debug_shader = nullptr;
 
 	AssetCatalogLoadResult result;
 	DataLoadError error;
@@ -116,10 +117,11 @@ AssetCatalogLoadResult AssetCatalog::load(const std::filesystem::path& assets_fi
 	}
 
 	const Json& shader_document = document["shaders"];
-	if (!json_data::validateKeys(shader_document, {"standardVertex", "instancedVertex", "fragment"}, {}, assets_file, "/shaders", error) ||
+	if (!json_data::validateKeys(shader_document, {"standardVertex", "instancedVertex", "fragment", "debugFragment"}, {}, assets_file, "/shaders", error) ||
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["standardVertex"], standard_vertex_path, assets_file, "/shaders/standardVertex", error) ||
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["instancedVertex"], instanced_vertex_path, assets_file, "/shaders/instancedVertex", error) ||
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["fragment"], fragment_path, assets_file, "/shaders/fragment", error) ||
+		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["debugFragment"], debug_fragment_path, assets_file, "/shaders/debugFragment", error) ||
 		!json_data::requireArray(document["assets"], 1, assets_file, "/assets", error))
 	{
 		materials.clear();

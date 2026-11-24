@@ -162,6 +162,10 @@ set(ARKFALL_HEADLESS_SOURCES
     ${DIR_SOURCES}/game/scene_parser.cpp
     ${DIR_SOURCES}/game/world_transform.cpp
     ${DIR_SOURCES}/game/surface_height_map.cpp
+    ${DIR_SOURCES}/game/navigation_grid.cpp
+    ${DIR_SOURCES}/game/scenario_loader.cpp
+    ${DIR_SOURCES}/game/colonist_catalog.cpp
+    ${DIR_SOURCES}/game/colony_simulation.cpp
 )
 file(GLOB ARKFALL_TEST_SOURCES CONFIGURE_DEPENDS ${DIR_ROOT}/tests/*.cpp ${DIR_ROOT}/tests/*.h)
 

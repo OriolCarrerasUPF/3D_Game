@@ -136,6 +136,51 @@ ColonyWorld::ColonyWorld(const AssetCatalog& assets)
 
 ColonyWorld::~ColonyWorld() = default;
 
+void ColonyWorld::setDebugLayer(const std::string& name, const std::string& material_id, DebugPrimitive primitive,
+	const std::vector<Vector3>& vertices)
+{
+	DebugLayer& layer = debug_layers[name];
+	if (!layer.mesh)
+		layer.mesh = std::make_unique<Mesh>();
+	const SemanticMaterial* material = assets->findMaterial(material_id);
+	layer.color = material ? material->tint : Vector4(1.0f, 0.0f, 1.0f, 1.0f);
+	layer.primitive = primitive;
+	// Client-side vertex array (no VBO): the geometry changes often and is tiny.
+	layer.mesh->vertices = vertices;
+}
+
+void ColonyWorld::clearDebugLayers()
+{
+	debug_layers.clear();
+}
+
+void ColonyWorld::renderDebugOverlay(Camera* camera)
+{
+	Shader* shader = assets->getDebugShader();
+	if (!debug_overlay_visible || !camera || !shader || !shader->compiled || debug_layers.empty())
+		return;
+
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glDepthMask(GL_FALSE);
+	glLineWidth(3.0f);
+	shader->enable();
+	shader->setUniform("u_viewprojection", camera->viewprojection_matrix);
+	shader->setUniform("u_model", Matrix44());
+	for (auto& [name, layer] : debug_layers)
+	{
+		(void)name;
+		if (!layer.mesh || layer.mesh->vertices.empty())
+			continue;
+		shader->setUniform("u_color", layer.color);
+		layer.mesh->render(layer.primitive == DebugPrimitive::Lines ? GL_LINES : GL_TRIANGLES);
+	}
+	shader->disable();
+	glLineWidth(1.0f);
+	glDepthMask(GL_TRUE);
+	glDisable(GL_BLEND);
+}
+
 std::unique_ptr<EntityMesh> ColonyWorld::makeView(const AssetDefinition& asset, const SemanticMaterial& material) const
 {
 	Material render_material;
@@ -297,6 +342,7 @@ void ColonyWorld::render(Camera* camera)
 		if (group.view)
 			group.view->render(camera);
 	}
+	renderDebugOverlay(camera);
 }
 
 std::size_t ColonyWorld::getInstanceCountForAsset(const std::string& asset_id) const

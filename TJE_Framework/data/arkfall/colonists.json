@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "roles": [
+    { "job": "engineer", "assetId": "astronaut", "materialId": "crew_engineer", "moveSpeed": 1.8 },
+    { "job": "miner", "assetId": "astronaut", "materialId": "crew_miner", "moveSpeed": 1.8 },
+    { "job": "farmer", "assetId": "astronaut", "materialId": "crew_farmer", "moveSpeed": 1.8 }
+  ]
+}

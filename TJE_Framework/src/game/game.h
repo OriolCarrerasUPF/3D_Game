@@ -10,6 +10,11 @@
 #include "asset_catalog.h"
 #include "colony_world.h"
 #include "fixed_step_clock.h"
+#include "colonist_catalog.h"
+#include "colony_simulation.h"
+
+#include <cstdint>
+#include <map>
 
 class Game
 {
@@ -36,6 +41,10 @@ public:
 	ColonyWorld colony_world;
 	// Fixed 1/30 s simulation steps; frame time clamped to 0.25 s, max 8 steps per frame.
 	FixedStepClock simulation_clock;
+	ColonistCatalog colonist_catalog;
+	ColonySimulation simulation;
+	std::map<ColonistId, DynamicViewId> colonist_views;
+	std::uint64_t overlay_revision;
 	bool scene_stats_logged;
 
 	Game( int window_width, int window_height, SDL_Window* window );
@@ -62,4 +71,9 @@ public:
 
 private:
 	void updateCamera(double seconds_elapsed);
+	void spawnColonistViews();
+	void syncColonistViews(float alpha);
+	void rebuildNavigationOverlay();
+	void updatePathOverlay(float alpha);
+	ColonistId getDebugColonist() const;
 };

@@ -34,6 +34,13 @@ AssetCatalogLoadResult AssetCatalog::loadReferencedAssets(const std::set<std::st
 		return result;
 	}
 
+	debug_shader = Shader::Get(standard_vertex_path.string().c_str(), debug_fragment_path.string().c_str());
+	if (!debug_shader || !debug_shader->compiled)
+	{
+		result.error = DataLoadError{ debug_fragment_path, "", "could not compile the debug overlay shader" };
+		return result;
+	}
+
 	// Validate the selected source OBJ/MTL files, not stale .mbin caches.
 	const bool previous_use_binary = Mesh::use_binary;
 	Mesh::use_binary = false;

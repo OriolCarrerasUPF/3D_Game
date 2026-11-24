@@ -3,7 +3,8 @@
   "shaders": {
     "standardVertex": "../shaders/basic.vs",
     "instancedVertex": "../shaders/instanced.vs",
-    "fragment": "../shaders/arkfall_lit.fs"
+    "fragment": "../shaders/arkfall_lit.fs",
+    "debugFragment": "../shaders/flat.fs"
   },
   "assets": [
     {

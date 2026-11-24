@@ -61,6 +61,8 @@ public:
 	const std::map<std::string, AssetDefinition>& getAssets() const { return assets; }
 	Shader* getStandardShader() const { return standard_shader; }
 	Shader* getInstancedShader() const { return instanced_shader; }
+	// Unlit single-colour shader (basic.vs + flat.fs) for debug overlays.
+	Shader* getDebugShader() const { return debug_shader; }
 
 private:
 	std::filesystem::path assets_path;
@@ -69,8 +71,10 @@ private:
 	std::filesystem::path standard_vertex_path;
 	std::filesystem::path instanced_vertex_path;
 	std::filesystem::path fragment_path;
+	std::filesystem::path debug_fragment_path;
 	std::map<std::string, AssetDefinition> assets;
 	std::map<std::string, SemanticMaterial> materials;
 	Shader* standard_shader = nullptr; // borrowed from the framework's Shader cache
 	Shader* instanced_shader = nullptr; // borrowed from the framework's Shader cache
+	Shader* debug_shader = nullptr; // borrowed from the framework's Shader cache
 };

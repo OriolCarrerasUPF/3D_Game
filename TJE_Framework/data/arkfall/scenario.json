@@ -38,6 +38,7 @@
   "debugRoute": {
     "colonistId": 1,
     "loop": true,
+    "dwellSeconds": 1.0,
     "stops": [
       { "label": "iron_mine_access", "cell": [9, 12] },
       { "label": "west_door_outside", "cell": [23, 31] },

@@ -85,6 +85,16 @@ public:
 	// Visual-only height of walkable static surfaces (terrain = 0, interior floor = 0.1).
 	float getVisualGroundHeight(float x, float z) const { return surface_heights.heightAt(x, z); }
 
+	// ---- Debug overlay (P03): flat-coloured world-space geometry ------------
+	// A named layer holds triangles or lines in world space, drawn after the scene
+	// with alpha blending. material_id selects the colour from materials.json.
+	enum class DebugPrimitive { Triangles, Lines };
+	void setDebugLayer(const std::string& name, const std::string& material_id, DebugPrimitive primitive,
+		const std::vector<Vector3>& vertices);
+	void clearDebugLayers();
+	void setDebugOverlayVisible(bool visible) { debug_overlay_visible = visible; }
+	bool isDebugOverlayVisible() const { return debug_overlay_visible; }
+
 	void render(Camera* camera);
 	std::size_t getStaticViewCount() const { return static_views.size(); }
 	std::size_t getInstanceCount() const { return instance_count; }
@@ -104,6 +114,14 @@ private:
 		std::size_t slot = 0;
 	};
 
+	struct DebugLayer
+	{
+		std::unique_ptr<Mesh> mesh;
+		Vector4 color;
+		DebugPrimitive primitive = DebugPrimitive::Triangles;
+	};
+
+	void renderDebugOverlay(Camera* camera);
 	std::unique_ptr<EntityMesh> makeView(const AssetDefinition& asset, const SemanticMaterial& material) const;
 
 	const AssetCatalog* assets;
@@ -114,4 +132,7 @@ private:
 	std::map<std::pair<std::string, std::string>, DynamicGroup> dynamic_groups;
 	std::unordered_map<DynamicViewId, DynamicRecord> dynamic_records;
 	DynamicViewId next_dynamic_id = 1;
+
+	std::map<std::string, DebugLayer> debug_layers;
+	bool debug_overlay_visible = false;
 };

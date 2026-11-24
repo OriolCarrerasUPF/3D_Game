@@ -2,7 +2,7 @@
 
 **Planning date:** 8 November 2026  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01 and P02 are implemented; the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md) and in sections C5, C9 and P03 below.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01, P02 and P03 are implemented (P03 results in [P03_navigation_report.md](P03_navigation_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md) and in sections C5, C9 and P03 below.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
