@@ -42,6 +42,7 @@ public:
 	float time;
 	float elapsed_time;
 	int fps;
+	int max_fps;   // FPS cap applied by mainLoop(); 0 or negative = uncapped
 	bool must_exit;
 
 	//some vars
@@ -59,22 +60,22 @@ public:
 	std::unique_ptr<ColonyUIRenderer> ui_renderer;
 	bool scene_stats_logged;
 
-	Game( int window_width, int window_height, SDL_Window* window );
+	Game(int window_width, int window_height, SDL_Window* window);
 	~Game();
 
 	//main functions
-	void render( void );
+	void render(void);
 	// Called once per frame with real (wall-clock) frame time.
-	void update( double dt );
+	void update(double dt);
 	// Called 0..8 times per frame with the fixed simulation step (seconds).
-	void fixedUpdate( double fixed_dt );
+	void fixedUpdate(double fixed_dt);
 
 	void setMouseLocked(bool must_lock);
 
 	//events
-	void onKeyDown( SDL_KeyboardEvent event );
+	void onKeyDown(SDL_KeyboardEvent event);
 	void onKeyUp(SDL_KeyboardEvent event);
-	void onMouseButtonDown( SDL_MouseButtonEvent event );
+	void onMouseButtonDown(SDL_MouseButtonEvent event);
 	void onMouseButtonUp(SDL_MouseButtonEvent event);
 	void onMouseWheel(SDL_MouseWheelEvent event);
 	void onGamepadButtonDown(SDL_JoyButtonEvent event);

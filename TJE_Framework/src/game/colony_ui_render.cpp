@@ -105,12 +105,14 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 	std::string status = "ARKFALL";
 	texts.push_back({ 10.0f, centeredTextY(ui.getTopBar(), text_scale), status, text_accent, text_scale });
 	const float status_x = 10.0f + measureTextWidth(status, text_scale) + 14.0f;
-	std::string line = formatTime(hud.simulation_seconds) + "  " +
+	// FPS goes first so fitText never cuts it off on narrow windows ("58/60 fps" when capped).
+	std::string line = std::to_string(hud.fps) +
+		(hud.max_fps > 0 ? "/" + std::to_string(hud.max_fps) : std::string()) + " fps  |  " +
+		formatTime(hud.simulation_seconds) + "  " +
 		(hud.paused ? std::string("PAUSED") : "x" + std::to_string(hud.speed_level)) +
 		"  |  Colonists " + std::to_string(hud.colonists_alive);
 	if (hud.has_door)
 		line += std::string("  |  Door ") + (hud.door_open ? "open" : "closed");
-	line += "  |  " + std::to_string(hud.fps) + " fps";
 	const float status_room = ui.getButtonRect(UiButton::Pause).x - status_x - 8.0f;
 	texts.push_back({ status_x, centeredTextY(ui.getTopBar(), text_scale), fitText(line, status_room, text_scale),
 		hud.paused ? text_bad : text_white, text_scale });

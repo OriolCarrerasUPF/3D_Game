@@ -34,6 +34,7 @@ struct HudInfo
 	bool ghost_inside = false;
 	bool ghost_valid = false;
 	std::string ghost_status;
+	int max_fps = 0; // FPS cap shown next to fps; 0 = uncapped
 };
 
 class ColonyUIRenderer

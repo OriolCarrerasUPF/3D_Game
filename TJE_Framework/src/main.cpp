@@ -1,7 +1,7 @@
 /*  by Javi Agenjo 2013 UPF  javi.agenjo@gmail.com
 
 	MAIN:
-	 + This file creates the window and the game instance. 
+	 + This file creates the window and the game instance.
 	 + It also contains the mainloop
 	 + This is the lowest level, here we access the system to create the opengl Context
 	 + It takes all the events from SDL and redirect them to the game
@@ -24,8 +24,8 @@
 //create a window using SDL
 SDL_Window* createWindow(const char* caption, int width, int height, SDL_GLContext& context, bool fullscreen = false)
 {
-    int multisample = 4;
-    bool retina = true; //change this to use a retina display
+	int multisample = 4;
+	bool retina = true; //change this to use a retina display
 
 	//set attributes
 	SDL_GL_SetAttribute(SDL_GL_RED_SIZE, 8);
@@ -41,18 +41,18 @@ SDL_Window* createWindow(const char* caption, int width, int height, SDL_GLConte
 
 	//antialiasing (disable this lines if it goes too slow)
 	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLEBUFFERS, 1);
-	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, multisample ); //increase to have smoother polygons
+	SDL_GL_SetAttribute(SDL_GL_MULTISAMPLESAMPLES, multisample); //increase to have smoother polygons
 
 	//create the window
-	SDL_Window *window = SDL_CreateWindow(caption, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_OPENGL|SDL_WINDOW_RESIZABLE|
-                                          (retina ? SDL_WINDOW_ALLOW_HIGHDPI:0) |
-                                          (fullscreen?SDL_WINDOW_FULLSCREEN_DESKTOP:0) );
-	if(!window)
+	SDL_Window* window = SDL_CreateWindow(caption, SDL_WINDOWPOS_CENTERED, SDL_WINDOWPOS_CENTERED, width, height, SDL_WINDOW_OPENGL | SDL_WINDOW_RESIZABLE |
+		(retina ? SDL_WINDOW_ALLOW_HIGHDPI : 0) |
+		(fullscreen ? SDL_WINDOW_FULLSCREEN_DESKTOP : 0));
+	if (!window)
 	{
 		fprintf(stderr, "Window creation error: %s\n", SDL_GetError());
 		return nullptr;
 	}
-  
+
 	// Create an OpenGL context associated with the window.
 	context = SDL_GL_CreateContext(window);
 	if (!context)
@@ -66,19 +66,19 @@ SDL_Window* createWindow(const char* caption, int width, int height, SDL_GLConte
 	SDL_PumpEvents(); //without this line asserts could fail on windows
 
 	//launch glew to extract the opengl extensions functions from the DLL
-	#ifdef USE_GLEW
-		const GLenum glew_status = glewInit();
-		if (glew_status != GLEW_OK)
-		{
-			fprintf(stderr, "OpenGL extension initialization error: %s\n", glewGetErrorString(glew_status));
-			SDL_GL_DeleteContext(context);
-			context = nullptr;
-			SDL_DestroyWindow(window);
-			return nullptr;
-		}
-		// GLEW can leave GL_INVALID_ENUM set while probing the context.
-		glGetError();
-	#endif
+#ifdef USE_GLEW
+	const GLenum glew_status = glewInit();
+	if (glew_status != GLEW_OK)
+	{
+		fprintf(stderr, "OpenGL extension initialization error: %s\n", glewGetErrorString(glew_status));
+		SDL_GL_DeleteContext(context);
+		context = nullptr;
+		SDL_DestroyWindow(window);
+		return nullptr;
+	}
+	// GLEW can leave GL_INVALID_ENUM set while probing the context.
+	glGetError();
+#endif
 
 	int window_width, window_height;
 	SDL_GetWindowSize(window, &window_width, &window_height);
@@ -97,12 +97,16 @@ void mainLoop(Game& game)
 	long now = start_time;
 	long frames_this_second = 0;
 
+	// FPS cap timing (high-resolution counter; SDL_GetTicks is only 1 ms precise).
+	const double counter_frequency = static_cast<double>(SDL_GetPerformanceFrequency());
+	Uint64 next_frame_counter = SDL_GetPerformanceCounter();
+
 	while (!game.must_exit)
 	{
 		Input::update();
 
 		//update events
-		while(!game.must_exit && SDL_PollEvent(&sdlEvent))
+		while (!game.must_exit && SDL_PollEvent(&sdlEvent))
 		{
 			switch (sdlEvent.type)
 			{
@@ -161,9 +165,9 @@ void mainLoop(Game& game)
 		game.elapsed_time = static_cast<float>(elapsed_time);
 		game.frame++;
 		frames_this_second++;
-		if (int(last_time_seconds *2) != int(game.time*2)) //next half second
+		if (int(last_time_seconds * 2) != int(game.time * 2)) //next half second
 		{
-			game.fps = (int)frames_this_second*2;
+			game.fps = (int)frames_this_second * 2;
 			frames_this_second = 0;
 		}
 
@@ -174,14 +178,34 @@ void mainLoop(Game& game)
 		game.render();
 
 		// Check errors in opengl only when working in debug
-		#ifdef _DEBUG
-			checkGLErrors();
-		#endif
+#ifdef _DEBUG
+		checkGLErrors();
+#endif
+
+		// FPS cap: wait until this frame's time slot ends (game.max_fps <= 0 = uncapped).
+		// Runs after Game::render(), which already swapped buffers, so it adds no input lag.
+		if (game.max_fps > 0)
+		{
+			next_frame_counter += static_cast<Uint64>(counter_frequency / game.max_fps);
+			const Uint64 now_counter = SDL_GetPerformanceCounter();
+			if (now_counter < next_frame_counter)
+			{
+				// Sleep most of the remaining time, then busy-wait the last ~1 ms for accuracy.
+				const double remaining_ms = (next_frame_counter - now_counter) * 1000.0 / counter_frequency;
+				if (remaining_ms > 2.0)
+					SDL_Delay(static_cast<Uint32>(remaining_ms - 1.0));
+				while (SDL_GetPerformanceCounter() < next_frame_counter) {}
+			}
+			else
+				next_frame_counter = now_counter; // frame ran late: don't try to catch up
+		}
+		else
+			next_frame_counter = SDL_GetPerformanceCounter();
 	}
 
 }
 
-int main(int argc, char **argv)
+int main(int argc, char** argv)
 {
 	std::cout << "Initiating game..." << std::endl;
 
@@ -194,14 +218,14 @@ int main(int argc, char **argv)
 	}
 
 	bool fullscreen = false; //change this to go fullscreen
-	Vector2 size(800,600);
+	Vector2 size(800, 600);
 
-	if(fullscreen)
+	if (fullscreen)
 		size = getDesktopSize(0);
 
 	//create the game window (WINDOW_WIDTH and WINDOW_HEIGHT are two macros defined in includes.h)
 	SDL_GLContext context = nullptr;
-	SDL_Window* window = createWindow("TJE", (int)size.x, (int)size.y, context, fullscreen );
+	SDL_Window* window = createWindow("TJE", (int)size.x, (int)size.y, context, fullscreen);
 	if (!window)
 	{
 		SDL_Quit();

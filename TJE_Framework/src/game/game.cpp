@@ -18,6 +18,17 @@ namespace
 	constexpr float camera_far_plane = 1000.0f;
 	constexpr float click_slop_pixels = 6.0f;   // a press that moves farther is not a click
 	constexpr float frame_padding_metres = 2.0f;
+
+	// ---- TEST: show one building model at startup ---------------------------------
+	// Put any building id from data/arkfall/assets.json here, or "" to show nothing:
+	//   "building_exit_door"        "building_storage"          "building_oxygenator"
+	//   "building_greenhouse"       "building_iron_processor"   "building_copper_processor"
+	//   "building_aurite_processor" "building_iron_mine"        "building_copper_mine"
+	//   "building_water_extractor"  "building_solar_panel"      "building_landing_pad"
+	//   "building_haven_beacon"
+	const char* const test_building_id = "building_solar_panel";
+	constexpr float test_building_x = 16.0f;   // world metres: 8 m east of the base wall
+	constexpr float test_building_z = 0.0f;
 }
 
 Game* Game::instance = NULL;
@@ -30,6 +41,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	, time(0.0f)
 	, elapsed_time(0.0f)
 	, fps(0)
+	, max_fps(60) // FPS cap: change this number (0 = uncapped)
 	, must_exit(false)
 	, camera(nullptr)
 	, mouse_locked(false)
@@ -68,7 +80,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		throw std::runtime_error(scenario_result.error->describe());
 	DataLoadError blocker_error;
 	if (!ScenarioLoader::validateSceneBlockers(scenario_result.scenario, scene_result.instances,
-			"data/arkfall/scene.json", blocker_error))
+		"data/arkfall/scene.json", blocker_error))
 		throw std::runtime_error(blocker_error.describe());
 
 	ColonistCatalogLoadResult colonist_result = definitions.colonists.load("data/arkfall/colonists.json");
@@ -89,6 +101,15 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		referenced_assets.insert(role.asset_id);
 	}
 
+	// TEST building (see test_building_id at the top of this file)
+	if (*test_building_id)
+	{
+		if (!asset_catalog.findAsset(test_building_id))
+			throw std::runtime_error(std::string("test building: '") + test_building_id +
+				"' is not an asset id in data/arkfall/assets.json");
+		referenced_assets.insert(test_building_id);
+	}
+
 	// Validate all authored JSON and references before creating any OpenGL assets.
 	AssetCatalogLoadResult resource_result = asset_catalog.loadReferencedAssets(referenced_assets);
 	if (!resource_result)
@@ -102,6 +123,17 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	if (!simulation.initialize(scenario_result.scenario, definitions, simulation_error))
 		throw std::runtime_error("scenario.json: " + simulation_error);
 	colony_world.syncVisuals(simulation, 0.0f);
+
+	// TEST building: visual only, it does not block colonists.
+	if (*test_building_id)
+	{
+		DataLoadError test_error;
+		const std::string& test_material = asset_catalog.findAsset(test_building_id)->material_id;
+		const DynamicViewId test_view = colony_world.createDynamicView(test_building_id, test_material, test_error);
+		if (test_view == invalid_dynamic_view)
+			throw std::runtime_error(test_error.describe());
+		colony_world.setDynamicViewPose(test_view, Vector3(test_building_x, 0.0f, test_building_z), 0.0f);
+	}
 
 	ui_renderer = std::make_unique<ColonyUIRenderer>(asset_catalog);
 
@@ -167,7 +199,7 @@ void Game::frameInitialView()
 		const Vector3 p = grid.cellCenter(c);
 		min_x = std::min(min_x, p.x - cell * 0.5f); max_x = std::max(max_x, p.x + cell * 0.5f);
 		min_z = std::min(min_z, p.z - cell * 0.5f); max_z = std::max(max_z, p.z + cell * 0.5f);
-	};
+		};
 	for (const DepositDefinition& deposit : scenario.deposits)
 		include(deposit.cell);
 	for (const InitialColonistDefinition& colonist : scenario.initial_colonists)
@@ -398,6 +430,7 @@ HudInfo Game::makeHudInfo() const
 	hud.has_door = simulation.getGrid().getDoorCount() > 0;
 	hud.door_open = hud.has_door && simulation.getGrid().isDoorOpen(0);
 	hud.fps = fps;
+	hud.max_fps = max_fps;
 	hud.debug_overlay = colony_world.isDebugOverlayVisible();
 	hud.edge_scroll = edge_scroll_enabled;
 	hud.navigation_revision = simulation.getGrid().getRevision();
@@ -457,34 +490,34 @@ void Game::render(void)
 // ---------------------------------------------------------------------------- events
 
 //Keyboard event handler (sync input)
-void Game::onKeyDown( SDL_KeyboardEvent event )
+void Game::onKeyDown(SDL_KeyboardEvent event)
 {
 	if (event.repeat)
 		return; // toggles react once per press
-	switch(event.keysym.sym)
+	switch (event.keysym.sym)
 	{
-		case SDLK_ESCAPE: cancelCurrent(true); break; // cancel/close; never quits (P10 adds the menu)
-		case SDLK_b: ui.setBuildMode(!ui.isBuildMode()); break;
-		case SDLK_r: if (ui.isBuildMode()) ui.rotateGhost(); break;
-		case SDLK_SPACE: togglePause(); break;
-		case SDLK_MINUS: case SDLK_KP_MINUS: setSpeedLevel(speed_level - 1); break;
-		case SDLK_PLUS: case SDLK_EQUALS: case SDLK_KP_PLUS: setSpeedLevel(speed_level + 1); break;
+	case SDLK_ESCAPE: cancelCurrent(true); break; // cancel/close; never quits (P10 adds the menu)
+	case SDLK_b: ui.setBuildMode(!ui.isBuildMode()); break;
+	case SDLK_r: if (ui.isBuildMode()) ui.rotateGhost(); break;
+	case SDLK_SPACE: togglePause(); break;
+	case SDLK_MINUS: case SDLK_KP_MINUS: setSpeedLevel(speed_level - 1); break;
+	case SDLK_PLUS: case SDLK_EQUALS: case SDLK_KP_PLUS: setSpeedLevel(speed_level + 1); break;
 		// P03 navigation debug keys (the GDD controls leave F3-F8 free); gameplay
 		// changes go through the command queue like any player order.
-		case SDLK_F3: handleUiAction(UiAction::ToggleOverlay); break;
-		case SDLK_F4: queueCommand(GameCommand::placeDebugObstacleAhead(getDebugColonist())); break;
-		case SDLK_F6: queueCommand(GameCommand::clearDebugObstacles()); break;
-		case SDLK_F7:
-			if (simulation.getGrid().getDoorCount() > 0)
-				queueCommand(GameCommand::setDoorOpen(0, !simulation.getGrid().isDoorOpen(0)));
-			break;
-		case SDLK_F8:
-			edge_scroll_enabled = !edge_scroll_enabled;
-			ui.showMessage(edge_scroll_enabled ? "Edge scrolling on" : "Edge scrolling off");
-			break;
-		#ifndef NDEBUG
-		case SDLK_F5: Shader::ReloadAll(); break;
-		#endif
+	case SDLK_F3: handleUiAction(UiAction::ToggleOverlay); break;
+	case SDLK_F4: queueCommand(GameCommand::placeDebugObstacleAhead(getDebugColonist())); break;
+	case SDLK_F6: queueCommand(GameCommand::clearDebugObstacles()); break;
+	case SDLK_F7:
+		if (simulation.getGrid().getDoorCount() > 0)
+			queueCommand(GameCommand::setDoorOpen(0, !simulation.getGrid().isDoorOpen(0)));
+		break;
+	case SDLK_F8:
+		edge_scroll_enabled = !edge_scroll_enabled;
+		ui.showMessage(edge_scroll_enabled ? "Edge scrolling on" : "Edge scrolling off");
+		break;
+#ifndef NDEBUG
+	case SDLK_F5: Shader::ReloadAll(); break;
+#endif
 	}
 }
 
@@ -493,7 +526,7 @@ void Game::onKeyUp(SDL_KeyboardEvent event)
 
 }
 
-void Game::onMouseButtonDown( SDL_MouseButtonEvent event )
+void Game::onMouseButtonDown(SDL_MouseButtonEvent event)
 {
 	const float x = static_cast<float>(event.x);
 	const float y = static_cast<float>(event.y);
