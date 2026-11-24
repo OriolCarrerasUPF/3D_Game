@@ -1,14 +1,14 @@
 # ARKFALL: MVP Implementation Plan
 
-**Planning date:** 8 November 2026  
+**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04)  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01, P02 and P03 are implemented (P03 results in [P03_navigation_report.md](P03_navigation_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md) and in sections C5, C9 and P03 below.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01, P02 and P03 are implemented (P03 results in [P03_navigation_report.md](P03_navigation_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md), and the plan review of the same day is summarised in the next section.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
 The framework supplies rendering and resource primitives. The colony simulation, construction, utility calculations, navigation integration, selection, and UI must be built.
 
-No game source was changed during the investigation. Compilation and gameplay were not executed. The validation procedures below are implementation tasks, not completed tests.
+Sections A2–A4 describe the framework baseline inspected on 8 November, before P01. The current implementation status and the corrections of the 24 November review are summarised in the next section; the results of completed steps are in their step reports.
 
 ## Reading conventions
 
@@ -18,6 +18,39 @@ No game source was changed during the investigation. Compilation and gameplay we
 - PDF references use physical page numbers, starting at 1.
 - Source paths are relative to the repository root unless stated otherwise. Proposed implementation files are rooted in `TJE_Framework/`.
 - All new classes and contracts below are proposals unless explicitly identified as existing.
+
+## Review of 24 November 2026 (before P04)
+
+The whole plan was re-checked against the MVP Scope, the GDD and the code on `main` after P03. The product described in B1 and F3 still delivers exactly the MVP Scope: one roofless map with visible iron and copper; pan, rotate and zoom; autonomous Engineers, Miners and Farmers taking the nearest free job; Hunger, Thirst and Oxygen (refill at 20, death at 0); the 13 buildings; power, water and oxygen as global numbers; ore straight into Storage; Landing Pad calls bringing 10 colonists; victory with a completed Haven Beacon (300 Aurite) and 100 living colonists; defeat when everyone on the surface is dead; build menu, resource bar, building popup and colonist popup with need bars. The corrections below remove contradictions and gaps that would have blocked later steps. Each one is applied in the section named.
+
+### Implementation status
+
+| Step | Status | Evidence / notes |
+|---|---|---|
+| P01 | Done, one item moved | Unified exit path, `Game::~Game`, wheel reset, debug-only F5. Escape still quits the game: P04 turns it into cancel/close and P10 adds the menu. |
+| P02 | Done | [P02_asset_report.md](P02_asset_report.md), including the 24 Nov corrections (matrix order, 2-cell door, visual-only walls, generated `scene.json`). |
+| P03 | Done | [P03_navigation_report.md](P03_navigation_report.md); 52 headless test cases pass in Debug. |
+| P04 | Next | See the corrected change list. |
+| P05–P11 | Pending | — |
+
+### Corrections made by this review
+
+1. **Architecture (C1–C3).** `ColonyWorld` is a pure view layer. `Game` owns the headless `ColonySimulation` and the world reads it through `ColonyWorld::syncVisuals(simulation, alpha)`. The old text, where `ColonyWorld` owned the simulation, contradicted the headless-simulation rule. The P03 sync code that lives in `Game` moves into `ColonyWorld` in P04.
+2. **Building data (C8, C9.1, P05, P07).** `buildings.json` with all 13 definitions is created in P05, not P07. The old P07 item "remove the duplicate C++ source-of-truth table" implied a C++ table in P05–P06, which contradicted F3 ("no duplicated C++ constants"). The example schema now separates construction workers from operating workers and stores the footprint as `[w, h]` at 0°.
+3. **Dev scenarios (C9.1, P05, P07).** `scenario.json` gains `initialInventory`, `cargoCapacity` and `initialBuildings` in P05, and `arkPassengers` and `arrivalDefaultJob` in P09. Dev scenarios live in `data/arkfall/dev/` and are selected with `--scenario`. The 12-colonist cast (4/6/2) is checked by a shipped-data test, not hard-coded in the loader, so dev scenarios can use other casts.
+4. **Where colonists drink (C6, C8).** The old "indoor service point" for water was not defined by any of the 13 buildings. Storage access cells now offer the `eat` and `drink` services, declared in `buildings.json` and drawing water from the global flow.
+5. **Exit Door and power (C5, C6.1, F3).** C5 and C6.1 contradicted each other. An unpowered door now stays passable, and power plus base oxygen only gate the suit refill. This also removes a deadlock where an all-or-nothing brownout would trap the Engineers who must build the next Solar Panel.
+6. **Mines on deposits (C5).** The placement rule forbade any footprint overlapping a deposit, which made mines impossible. A mine's footprint must now contain exactly one free deposit of its resource.
+7. **Footprint rotation (C5).** The exact quarter-turn transform is written down, so the placement preview and the commit cannot disagree.
+8. **Haven Beacon power (C8).** Power demand is now 0. The Beacon has no operating function in the MVP, and a 5-unit draw at the end of the game could trigger the all-or-nothing brownout for nothing.
+9. **Rocket arrivals (C5.1, P09).** Arrivals appear on the free access cells around the called Landing Pad, not at the initial landing cluster. The GDD shortcut (select the pad, press L) is added.
+10. **Command timing (C4, C6.1).** C4 said "once per frame" and C6.1 said "at tick start". Commands are now applied once per frame before that frame's ticks, also while paused, so orders never wait for time to pass.
+11. **Missing P04 items.** Remove the framework example controls (left-drag rotation, middle-click mouse lock); Escape no longer quits; add pause, which the P04 acceptance already required, optional edge scrolling (GDD), the command queue, picking that returns simulation IDs, the move of view sync into `ColonyWorld`, and an initial view that frames the base and both deposits.
+12. **Idle colonists (C6).** Idle colonists with nothing to do no longer stand outside draining their suits; they wait inside the base when it is reachable.
+13. **Visual assets (A5, P07).** The Solar Panel uses a small team-authored OBJ instead of procedural geometry, so the pipeline stays OBJ-only. The copper deposit switches to `rock_crystals.obj` in P07, and the remaining building models are copied in P05 and P07.
+14. **Title/menu (P10, P11).** The title/menu screen moves to P10, because the outcome panel's Menu button needs it. P11 keeps help, loading feedback, audio and packaging.
+15. **Data contracts (C9.1).** The name pool must cover the initial colonists plus `arkPassengers`, instead of a literal 200. `colonists.json` no longer lists role capabilities: `buildings.json` is the only source of role/building compatibility.
+16. **Stale statements.** The A2–A4 baseline labels, build/test commands, the file tree, the verification gaps and the milestone status were updated.
 
 ## A. Sources Reviewed and Diagnosis
 
@@ -60,7 +93,7 @@ Other inspected material:
 
 **Inspection limits:** external videos and linked websites were not watched or opened. FBX, DAE and STL variants were inventoried but not imported into an editor. No asset was rendered through the game, so loader compatibility is established by static inspection, not a completed runtime test.
 
-### A2. Current project behavior
+### A2. Baseline project behavior (8 November 2026, before P01)
 
 The current application:
 
@@ -136,6 +169,8 @@ Relevant verified symbols:
 - `TJE_Framework/src/graphics/mesh.cpp:1720`: `Mesh::Get`.
 - `TJE_Framework/src/framework/audio.cpp:54`: `Audio::Destroy`.
 
+**Status after P03 (24 Nov 2026):** navigation is resolved by `NavigationGrid` (BFS, P03). Resource lifetime: `Game::~Game` and the unified exit path are done (P01); cache cleanup remains for P11. Input: the wheel reset is done (P01), but the middle-button mouse lock and left-drag camera rotation are still in `Game` and are removed in P04. Materials: `arkfall_lit.fs` uses the MTL colours (P02). OBJ safety: `MAX_SUBMESH_DRAW_CALLS` was raised to 64 and every write is bounds-checked (P02). JSON: `nlohmann/json` is vendored and all loaders share `json_data` (P02/P03). Audio is untouched (P11).
+
 ### A5. Asset inventory and integration
 
 The actual asset directory is named **`assests`**. Preserve it as source material; copy only selected runtime assets into `data`.
@@ -173,11 +208,11 @@ All source candidates below are under `assests/Models/OBJ format/`.
 | Oxygenator | `machine_barrel.obj` | Label/color distinction. |
 | Water Extractor | `machine_generator.obj` | Label/color distinction. |
 | Iron/Copper/Aurite Processor | `machine_generatorLarge.obj` | Three colors and labels; shared geometry acceptable. |
-| Iron/Copper deposit | `rock.obj`, `rock_crystals.obj` | Distinct material tint and deposit marker. |
+| Iron/Copper deposit | `rock.obj` (iron), `rock_crystals.obj` (copper) | Today both use `rock.obj`, with a copper tint. Copper switches to `rock_crystals.obj` in P07, when mines must be placed on the matching deposit. |
 | Mines | Rock + machine composition | Proposed composite placeholder. |
 | Greenhouse | Platform + small machine composition | Proposed roofless placeholder; vegetation pending. |
-| Solar Panel | Generated tilted rectangular panel | New simple geometry. |
-| Landing Pad | Platform composition | New painted landing marker. |
+| Solar Panel | Small team-authored OBJ/MTL (tilted panel) in `data/arkfall/models` | Keeps the OBJ-only asset pipeline; no procedural geometry. |
+| Landing Pad | `platform_large.obj` composition | Landing tint from `materials.json`. |
 | Haven Beacon | `machine_wireless.obj` + `satelliteDish_large.obj` | Proposed composite, visibly larger. |
 
 These are mappings, not claims that the kit contains finished ARKFALL buildings.
@@ -186,7 +221,7 @@ These are mappings, not claims that the kit contains finished ARKFALL buildings.
 
 The source pack has 153 OBJ models. The table below measures the axis-aligned extents of every source OBJ model, in source coordinates and Y-up order (X × Y × Z). These raw values are not asserted to be physical metres; the plan maps them to metres by applying the proposed uniform scale. The proposed uniform scale is a visual starting point, not a gameplay footprint. Scale 1.00 deliberately preserves modular pieces, vehicles and decorative variants; small props are allowed to stay smaller than a 1 m cell. Where a model has a specific gameplay use, use its explicit target scale in the following table. Building footprints remain authoritative for occupancy.
 
-The overrides make the building visuals fill roughly 80–85% of their 2×2 m logical footprint where the source model is a compact machine or storage cluster. They do not change the 1 m terrain cell, 2×2 m floor module, or 1 m Exit Door portal. Composite buildings apply component scales in their building visual definition so the same model can be used at different sizes without changing its source mesh.
+The overrides make the building visuals fill roughly 80–85% of their 2×2 m logical footprint where the source model is a compact machine or storage cluster. They do not change the 1 m terrain cell or the 2×2 m floor module. The Exit Door gate keeps catalog scale 1; the scene scales it to the door width (2 m for the 2-cell west door). Composite buildings apply component scales in their building visual definition so the same model can be used at different sizes without changing its source mesh.
 
 | OBJ asset | Source dimensions X × Y × Z (source units) | Proposed uniform scale | Vertex count |
 |---|---:|---:|---:|
@@ -382,6 +417,11 @@ Every asset with scale 1.00 in the inventory keeps its source size. This is inte
 | Starting resources, rates, footprints and construction times are unspecified | Use the explicit provisional tuning below; keep it centralized. |
 | GDD starts with no base | Start with no constructed buildings and a finite landing-cargo inventory. |
 | MVP postpones lore; T19 requires completeness | Separate the playable MVP from the academic delivery gate. A simple title/help screen is sufficient initially; narrative presentation remains later. |
+| GDD: the crew builds the sealed base from nothing; the MVP building list has no wall or corridor building | The base perimeter is a pre-placed shell (the scenario's interior rectangle). Only the Exit Door, on a door socket, and the interior buildings are constructed. |
+| GDD: suits refill at a powered door, but passage is not tied to power | An unpowered Exit Door can still be crossed; only the suit refill needs power and base oxygen. |
+| Neither the MVP nor the GDD's MVP subset says where colonists drink (the GDD's Water Deposit is deferred) | Storage access cells serve food and water (`eat`/`drink` services in `buildings.json`); water comes from the global flow. |
+| MVP "Haven Beacon built" gives the Beacon no operating function | The Beacon draws no power, so completing it cannot cause a brownout. |
+| Rocket arrivals: the GDD lands them at the Landing Pad | Arrivals appear on the free access cells around the called Landing Pad. |
 
 ## B. Verifiable MVP Scope
 
@@ -419,30 +459,34 @@ Basic restart, help, loading feedback, sound and packaging belong to the **acade
 
 ```mermaid
 flowchart TD
-    SDL[Existing SDL event loop] --> Game[Existing Game — modified]
+    SDL[SDL event loop - main.cpp] --> Game[Game - application coordinator]
     Game --> UI[ColonyUI]
     Game --> Camera[StrategyCamera]
     UI --> Commands[GameCommand queue]
-    Commands --> Sim[ColonySimulation]
+    Commands --> Sim[ColonySimulation - headless]
+    Clock[FixedStepClock - 1/30 s steps] --> Sim
+    Loaders[AssetCatalog / SceneParser / ScenarioLoader / ColonistCatalog / BuildingCatalog] --> Sim
     Sim --> Nav[NavigationGrid]
     Sim --> State[Colonists / Buildings / Inventory / Utilities]
-    State --> World[ColonyWorld visual adapter]
-    Assets[AssetCatalog] --> World
-    World --> Root[Existing Entity root + proposed EntityMesh]
-    Root --> GL[Existing Mesh / Material / Shader]
+    Sim -. read-only syncVisuals .-> World[ColonyWorld - views only]
+    Loaders --> World
+    World --> Views[EntityMesh groups: static scene, dynamic views, debug overlay]
+    Views --> GL[Existing Mesh / Material / Shader]
 ```
 
-**`Game`** remains the application coordinator. It owns the camera controller, UI, asset catalog and colony world.
+**`Game`** remains the application coordinator. It owns, by value, the data catalogs, the `FixedStepClock`, the `ColonySimulation` and the `ColonyWorld`, and from P04 the strategy camera and `ColonyUI`. Each frame it routes input, applies the queued commands, advances the simulation in fixed steps and asks the world to sync and render.
 
-**`ColonySimulation`** owns gameplay records and deterministic updates. It performs no resource loading, drawing or SDL polling.
+**`ColonySimulation`** owns the gameplay records, the `NavigationGrid` and the deterministic updates. It performs no resource loading, drawing or SDL polling, and it is compiled into the headless `arkfall_tests` target.
 
-**`NavigationGrid`** owns occupancy, indoor/outdoor classification and BFS search scratch space.
+**`NavigationGrid`** owns occupancy, the inside/outside zones, door crossings and the BFS scratch space.
 
-**`ColonyWorld`** owns the simulation plus renderable views. It synchronizes transforms/colors from gameplay records and renders the scene.
+**`ColonyWorld`** owns the render views only: instanced static scene groups, dynamic views (colonists, later buildings and blueprints) addressed by `DynamicViewId`, the visual floor-height map and the debug overlay layers. It reads the simulation through `syncVisuals(const ColonySimulation&, alpha)` and never modifies it. In P03 this sync code still lives in `Game`; P04 moves it into `ColonyWorld`.
 
-**`EntityMesh : Entity`** supplies the missing renderable entity. Store `Material` by value and cache-returned `Mesh*` as a borrowed pointer.
+**`EntityMesh : Entity`** is one asset/material group with any number of instances, static or moved every frame. It stores `Material` by value and the cache-returned `Mesh*` as a borrowed pointer.
 
-**`AssetCatalog`** maps gameplay types to existing meshes/materials, normalization transforms and placeholder compositions. Keep gameplay definitions available independently of GPU resource loading so headless simulation tests need no OpenGL context.
+**`AssetCatalog`** maps asset IDs to meshes/materials and normalization transforms. `load()` validates `assets.json`/`materials.json` without OpenGL; `loadReferencedAssets()` (a separate source file) compiles the shaders and loads only the meshes that the data references.
+
+**Data loaders** — `SceneParser` (`scene.json`), `ScenarioLoader` (`scenario.json` plus the scene-blocker cross-check), `ColonistCatalog` (`colonists.json`) and, from P05, `BuildingCatalog` (`buildings.json`) — produce typed records, share the `json_data` helpers and report errors as file + JSON pointer + message.
 
 **`ColonyUI`** owns panel layout, selected IDs, build-mode state and input hit testing. It emits commands; drawing never changes simulation state.
 
@@ -472,14 +516,15 @@ bool NavigationGrid::findNearest(
     Cell start, const std::vector<Cell>& targets,
     Cell& out_target, std::vector<Cell>& out_path) const;
 
-bool ColonySimulation::initialize(const ScenarioDefinition& scenario);
+bool ColonySimulation::initialize(const ScenarioDefinition& scenario,
+    const GameDefinitions& definitions, std::string& error);
 void ColonySimulation::tick(float dt);
 CommandResult ColonySimulation::apply(const GameCommand& command);
 
 PlacementResult ColonySimulation::validatePlacement(
     BuildingType type, Cell origin, unsigned quarter_turns) const;
 
-void ColonyWorld::syncVisuals();
+void ColonyWorld::syncVisuals(const ColonySimulation& simulation, float interpolation_alpha);
 void ColonyWorld::render(Camera* camera);
 
 bool ColonyUI::handlePointer(const PointerEvent& event);
@@ -489,6 +534,8 @@ void ColonyUI::render(const ColonySimulation& simulation);
 `findPath` clears its output on every call and returns `false` for unreachable targets. Start-equals-goal returns a successful one-cell path.
 
 Expose read-only simulation queries for UI/rendering; UI must not obtain mutable inventory or worker containers.
+
+`GameDefinitions` groups the loaded catalogs (`ColonistCatalog`, and from P05 `BuildingCatalog`) so the `initialize` signature stays stable as catalogs are added; P03 passes the `ColonistCatalog` directly. The shared types already implemented in `arkfall_types.h` are the IDs, `Cell`, `Zone`, `DoorPortal`, `DepositType`/`DepositDefinition`, `Job`, `ColonistState` and `Route`.
 
 | Record | Relevant members |
 |---|---|
@@ -505,12 +552,12 @@ Expose read-only simulation queries for UI/rendering; UI must not obtain mutable
 |---|---|---|
 | SDL window/context | `main` | Entire application; released after game/resources. |
 | Existing `Game::camera` | `Game` | Delete in proposed destructor. |
-| Simulation records/grid | `ColonySimulation`, by value | One run; reset together. |
+| Simulation records/grid | `ColonySimulation`, owned by `Game` by value | One run; reset together. |
 | Visual entities | `ColonyWorld`, `unique_ptr` containers | One run. |
 | `Entity::children`/`parent` | Borrowed relationships | Detach before destroying visual entities. |
 | Cached meshes/textures/shaders | Existing global managers | Application lifetime; remain loaded across restart. |
 | Per-entity `Material` | Entity, by value | Entity lifetime; resource pointers are borrowed. |
-| Generated meshes | `AssetCatalog`, explicit owning pointers | Application lifetime. |
+| Debug overlay meshes | `ColonyWorld`, `unique_ptr` | One run. Every terrain/building visual is an OBJ asset; there is no procedural mesh generation. |
 | Selection and job targets | IDs | Resolve before use; clear/release on death/reset. |
 
 Do not make both `Entity` and `ColonyWorld` delete children. This plan leaves existing `Entity` ownership unchanged.
@@ -518,7 +565,7 @@ Do not make both `Entity` and `ColonyWorld` delete children. This plan leaves ex
 At shutdown:
 
 1. Stop simulation and clear UI selections.
-2. Destroy world views and generated meshes.
+2. Destroy world views and overlay meshes.
 3. Stop audio; delete cached audio objects before `BASS_Free`.
 4. Delete each unique cached mesh, then textures and shaders; clear manager maps.
 5. Delete camera and clear static pointers.
@@ -540,9 +587,9 @@ Any cache cleanup function described here is **new work**, not an existing frame
 
 1. Capture input/events; let UI consume pointer actions first.
 2. Update strategy camera using real frame time.
-3. Apply queued gameplay commands once.
+3. Apply queued gameplay commands once, in FIFO order, before this frame's ticks — also while paused or when the frame runs zero ticks, so player orders never wait for time to pass.
 4. Advance simulation through fixed ticks of `1/30 s`.
-5. Synchronize visual records.
+5. Synchronize views once (`ColonyWorld::syncVisuals`), interpolating between the last two ticks.
 6. Render world, placement/selection overlays, HUD and text.
 7. Swap buffers once.
 
@@ -558,11 +605,12 @@ Use a **64×64 XZ grid with 1 m cells** as the MVP world coordinate system. The 
 - Four-way connectivity avoids diagonal corner cutting. Movement is continuous between cell centers, while pathfinding and occupancy are cell based.
 - Buildings occupy rectangular grid footprints declared per building in `buildings.json`; footprint size is independent of visual mesh bounds.
 - A footprint stores width/height at 0° with origin at its minimum-cell corner. Quarter-turns are `0..3`; odd turns swap width/height. Rotate access offsets by the same integer transform around that origin, then validate them against the rotated footprint. The preview and commit call the same pure transform/validation functions.
-- Each building definition includes its model scale, pivot offset, forward direction, rotation steps, and walkable service/access offsets. A visual may be smaller than its logical footprint, but unexplained invisible blocking beyond one 1 m safety margin is not allowed.
+- Quarter-turn transform (one shared pure function): for a footprint `w×h` at 0° and a cell or access offset `(dx, dz)` in that frame, `q=1 → (h−1−dz, dx)`, `q=2 → (w−1−dx, h−1−dz)`, `q=3 → (dz, w−1−dx)`; odd `q` gives an `h×w` footprint. The visual rotates by `q×90°` about the footprint centre, with the `world_transform` yaw convention (a +90° turn maps +X to +Z).
+- Each building definition includes its visual composition (asset, offset, yaw, scale multiplier) and its walkable service/access offsets; the asset's own scale, pivot and forward axis come from `assets.json`. A visual may be smaller than its logical footprint, but unexplained invisible blocking beyond one 1 m safety margin is not allowed.
 - Access/service cells are walkable cells adjacent to footprints and are reserved/validated with the building footprint.
 - Indoor cells form a fixed roofless base region.
 - The boundary is modelled on cell **edges**, not cells: every cell is classified as inside or outside, and a step between an inside and an outside cell is allowed only through an open Exit Door crossing. Wall pieces are visual only (`blocksNavigation: false`) and never remove interior or exterior cells.
-- An Exit Door is a **list of crossings**, each an `(outside cell, inside cell)` 4-neighbour pair on the same side of the base and contiguous. `NavigationGrid` stores crossings per door so a 1-cell or wider door works without code changes. Door width, mesh pivot and visual opening align to those crossings (the scene generator scales the gate to the crossing count). Only a completed, enabled door permits crossing; power requirements affect operation only if specified by its definition.
+- An Exit Door is a **list of crossings**, each an `(outside cell, inside cell)` 4-neighbour pair on the same side of the base and contiguous. `NavigationGrid` stores crossings per door so a 1-cell or wider door works without code changes. Door width, mesh pivot and visual opening align to those crossings (the scene generator scales the gate to the crossing count). Only a completed, enabled door permits crossing; power and base oxygen only gate the suit refill on inward crossing (C6), never passage.
 - Decorative objects only block navigation when explicitly marked.
 
 This preserves the GDD's Exit Door rule without simulating air volumes or building a physics engine.
@@ -574,7 +622,7 @@ On blueprint placement, validate a temporary occupancy change before committing 
 - Required service/job access remains reachable.
 - Indoor/outdoor restrictions and deposit match hold.
 - Colonists retain a path to the appropriate side of an Exit Door.
-- The candidate cells do not overlap deposits, map bounds, other buildings, static blockers, portal cells or reserved spawn cells.
+- The candidate cells stay inside the map and do not overlap other buildings, static blockers, door-crossing cells or reserved spawn cells. They do not overlap deposits either, except for a mine: its footprint must contain exactly one free deposit of its required resource, and that deposit cell becomes part of the mine's footprint.
 - Every service point and every occupied job slot has a walkable access cell after placement.
 
 Increment a navigation revision after committed changes. Replan paths affected by a revision; never continue through newly blocked cells. A worker already in a newly blocked cell is moved only by an explicit recovery rule: cancel its route, select the nearest unblocked adjacent cell that preserves its zone, or report a deterministic stuck error and retry after the next revision. Never teleport through a wall or door.
@@ -585,11 +633,11 @@ Colonists may share a grid cell and visually overlap in the MVP. They must not c
 
 The framework's game coordinate convention is Y-up, with movement on XZ. Convert model bounds once during asset-catalog load and store a normalized visual transform; do not infer gameplay footprints at runtime from rendered triangles. Keep the grid origin and cell-center conversion in `NavigationGrid` and use the same conversion for placement previews, picking, spawn points and scene transforms.
 
-Known pack measurements establish useful anchors: `terrain.obj` spans 1×1 m in XZ; `platform_small.obj` is 1×1 m; `platform_large.obj` is 2×2 m and 0.1 m high; `gate_simple.obj` is about 1 m wide; `astronautA.obj` is about 0.793 m tall before the proposed ~2.269 uniform scale to 1.8 m. Machines and rocks have varying sub-meter to ~1.3 m bounds. Render `platform_large` as a 2×2 cell floor module; do not scale it to a 1-cell tile. Keep each building's grid footprint, model scale, ground-contact/pivot offset, semantic forward axis and portal/access offsets together in its JSON definition.
+Known pack measurements establish useful anchors: `terrain.obj` spans 1×1 m in XZ; `platform_small.obj` is 1×1 m; `platform_large.obj` is 2×2 m and 0.1 m high; `gate_simple.obj` is about 1 m wide; `astronautA.obj` is about 0.793 m tall before the proposed ~2.269 uniform scale to 1.8 m. Machines and rocks have varying sub-meter to ~1.3 m bounds. Render `platform_large` as a 2×2 cell floor module; do not scale it to a 1-cell tile. Keep each building's grid footprint, access offsets and visual composition together in `buildings.json`, and each model's scale, ground-contact/pivot offset and semantic forward axis in `assets.json`.
 
 For every selected OBJ, P02 must record tested bounds, MTL/material runs, semantic facing, foot contact and loader result. Define a world-space picking proxy and navigation footprint separately. Do not use `Mesh::testSphereCollision` as the building-placement system; use grid occupancy. Ray picking uses the visual proxy followed by mesh ray testing only where needed.
 
-Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. Define the roofless base region as the rectangle `x=24..39, z=24..39`, with the complete perimeter boundary closed except one fixed west-side Exit Door. **Team decision (24 Nov 2026): the door is 2 cells wide**, with crossings `(23,31)→(24,31)` and `(23,32)→(24,32)`; the gate model is drawn at scale 2 (2 m × 2.16 m). Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
+Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. Define the roofless base region as the rectangle `x=24..39, z=24..39`, with the complete perimeter boundary closed except one fixed west-side Exit Door. **Team decision (24 Nov 2026): the door is 2 cells wide**, with crossings `(23,31)→(24,31)` and `(23,32)→(24,32)`; the gate model is drawn at scale 2 (2 m × 2.16 m). Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Rocket arrivals (P09) appear instead on the free access cells around the Landing Pad that was called. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
 
 `scene.json` must render the fixed boundary around this region with a visible doorway opening exactly as wide as the door crossings, terrain across the navigable map and markers/models for both deposits. The region has no floor/roof obstruction that prevents movement; floor modules are visual only. Placement is allowed in the interior/exterior zones specified by each building definition. The first Exit Door may be built from the exterior access cell before any indoor access exists.
 
@@ -605,8 +653,8 @@ Needs interrupt work at `<=20`. Retain the refill task until the need reaches 10
 
 Service rules:
 
-- Hunger: visit a completed Storage access point; consume one vegetable to refill Hunger.
-- Thirst: visit an indoor service point with available water; refill over time.
+- Hunger: visit an access cell of a completed building that offers the `eat` service (MVP: Storage); one vegetable restores Hunger to 100 after the eating time in C8.
+- Thirst: visit an access cell of a completed building that offers the `drink` service (MVP: Storage, which taps the global water flow); refill over time while water is allocated (C7).
 - Oxygen outside: consume suit oxygen.
 - Oxygen inside: maintain Oxygen only when operational Oxygenators cover **all indoor living colonists**.
 - Oxygen in a powered mine: maintain Oxygen for Miners actively working there.
@@ -620,6 +668,8 @@ At zero in any lethal need: mark dead, release reservations immediately and excl
 
 Unavailable services must not produce busy loops. Release stale reservations, keep needs draining, and retry after a short simulation-time interval or relevant world revision.
 
+Idle: a colonist with no eligible task and no urgent need walks to the nearest reachable interior cell that is not a door-crossing cell and waits there, so it does not drain its suit outside. With no reachable interior (no door yet) it waits where it stands. Colonists may share cells (C5).
+
 #### C6.1 Deterministic colonist state transitions
 
 At each fixed tick, apply this precedence: `Dead` is terminal; validate the current reservation/job and utilities; evaluate lethal needs; continue an active service; continue a valid work task; otherwise choose a new eligible task or remain `Idle`. A need at or below 20 interrupts work immediately. Release the work reservation before selecting a service. Retain the service target until that need reaches 100 or the service becomes unavailable. On job change, death, building disable/removal, role change or failed route, release all reservations and clear stale targets exactly once.
@@ -628,9 +678,9 @@ Allowed transitions: `Idle -> MovingToWork`; `MovingToWork -> Working | MovingTo
 
 When several needs are <=20, estimate seconds to zero using current drain and reachable service/refill rate; choose the smallest estimate, with Oxygen, Thirst, Hunger as deterministic tie order. If no service exists, keep the need draining, expose the exact unavailable reason, and retry after 2 simulation seconds or a relevant utility/map revision. Do not recreate a full path every tick.
 
-Suit oxygen is a 0–100 need meter. Outside without a local mine supply, it drains at the C8 unsupplied rate. At <=20 the colonist abandons work and returns to the nearest valid inward portal; do not start an outdoor job unless the estimated outbound work interruption plus return travel can reach a powered, operational refill portal before the meter reaches zero. Refilling occurs only after crossing inward through an operational Exit Door while base oxygen coverage is active; it restores to 100 at the configured refill rate. A closed/unpowered/invalid door blocks crossing and cannot refill the suit. A powered, staffed Miner in an operating mine receives local oxygen while physically working there; this local service never increases base indoor capacity or refills other colonists.
+Suit oxygen is a 0–100 need meter. Outside without a local mine supply, it drains at the C8 unsupplied rate. At <=20 the colonist abandons work and returns to the nearest valid inward portal; do not start an outdoor job unless the estimated outbound work interruption plus return travel can reach a powered, operational refill portal before the meter reaches zero. Refilling occurs only after crossing inward through an operational Exit Door while base oxygen coverage is active; it restores to 100 at the configured refill rate. A door that is not complete or is disabled blocks crossing; an unpowered door, or one without base oxygen coverage, can still be crossed but does not refill the suit. A powered, staffed Miner in an operating mine receives local oxygen while physically working there; this local service never increases base indoor capacity or refills other colonists.
 
-Use reservations keyed by `(target ID, slot index)` for job, construction and service tasks. Each slot has at most one owner; each colonist has at most one active reservation. `releaseReservation(id)` is idempotent. Commands apply at tick start and return structured results (`accepted`, reason code, user-facing detail); multiple commands in one tick are processed FIFO against the state resulting from earlier commands.
+Use reservations keyed by `(target ID, slot index)` for job, construction and service tasks. Each slot has at most one owner; each colonist has at most one active reservation. `releaseReservation(id)` is idempotent. Commands are applied once per frame, before that frame's ticks (C4), and return structured results (`accepted`, reason code, user-facing detail); several commands are processed FIFO against the state resulting from earlier commands.
 
 ### C7. Utilities and resource transactions
 
@@ -683,9 +733,11 @@ These values are implementation starting points, not documented game requirement
 | Initial needs | 100 each |
 | Initial cargo | 60 Steel, 20 Components, 20 Vegetables |
 | Temporary cargo capacity | 100; replaced by normal Storage capacity when first Storage completes |
-| Colonist speed | 1.8 m/s |
+| Colonist speed | 1.8 m/s (`colonists.json`, `moveSpeed` per role) |
 | Drain per second | Hunger 0.10, Thirst 0.12, unsupplied Oxygen 0.10 |
 | Thirst refill | 20 need units/s; consumes 0.01 water per restored unit |
+| Hunger refill | One vegetable restores Hunger to 100 after 3 s of eating |
+| Eat/drink points | Access cells of completed buildings offering the `eat`/`drink` service (MVP: Storage) |
 | Oxygenator capacity | 25 indoor colonists |
 | Mine slots | Five Miners |
 | Processor/Greenhouse slots | One compatible worker |
@@ -694,14 +746,14 @@ These values are implementation starting points, not documented game requirement
 | Rocket cooldown/animation | None initially; one batch per explicit activation |
 | Deposits | Infinite for MVP; type and position still explicit |
 
-Starting cargo can fund construction immediately, but food refill requires a constructed Storage. There is no prebuilt base. The initial oxygen reserve provides time to construct the first service chain.
+Starting cargo can fund construction immediately, but eating and drinking require a constructed Storage (and drinking also a powered Water Extractor). There is no prebuilt base. The initial needs give about 11 minutes before Thirst reaches 20 and about 13 minutes before Hunger and suit Oxygen do, which is the window for the bootstrap chain in E3 (Solar Panel, Water Extractor, Exit Door, Oxygenator, Storage).
 
 Proposed building definitions:
 
 | Type | Zone | Footprint | Cost | Build seconds | Power demand | Water/s | Operation |
 |---|---|---|---|---:|---|---:|---|
-| Exit Door | Boundary socket | Portal | 5 Steel | 10 | 1 | 0 | Inside/outside passage |
-| Storage | Interior | 2×2 | 5 Steel | 10 | 0 | 0 | +100 item capacity |
+| Exit Door | Boundary socket | Portal | 5 Steel | 10 | 1 | 0 | Inside/outside passage; power is needed only for the suit refill |
+| Storage | Interior | 2×2 | 5 Steel | 10 | 0 | 0 | +100 item capacity; `eat` and `drink` service point |
 | Oxygenator | Interior | 2×2 | 5 Steel, 2 Components | 15 | 2 | 0.02 | Capacity 25 |
 | Greenhouse | Interior | 3×3 | 8 Steel, 2 Components | 20 | 2 | 0.05 | One vegetable/10 s |
 | Iron Processor | Interior | 2×2 | 5 Steel, 2 Components | 15 | 3 | 0 | One ore→one Steel/5 s |
@@ -712,11 +764,11 @@ Proposed building definitions:
 | Water Extractor | Exterior | 2×2 | 5 Steel, 2 Components | 15 | 2 | 0 | Produces two water/s |
 | Solar Panel | Exterior | 2×2 | 5 Steel, 1 Component | 10 | Generates 20 | 0 | Constant generation |
 | Landing Pad | Exterior | 4×4 | 10 Steel, 5 Components | 20 | 1 | 0 | Arrival service |
-| Haven Beacon | Exterior | 4×4 | **300 Aurite** | 60 | 5 | 0 | Victory building |
+| Haven Beacon | Exterior | 4×4 | **300 Aurite** | 60 | 0 | 0 | Victory building; no operating function, so no power draw |
 
 Operational staffing is fixed as follows: Iron Mine and Copper Mine accept up to five Miners each, producing one ore per present Miner per cycle; Iron, Copper and Aurite Processors each require one Miner; Greenhouse requires one Farmer; Exit Door, Storage, Oxygenator, Water Extractor, Solar Panel, Landing Pad and Haven Beacon require no operational worker. Construction of every building requires one Engineer in its construction slot. These assignments are data in `buildings.json`; there are no implicit compatibility rules in C++.
 
-Storage is deliberately passive. All rates, costs, dimensions, utility demands, access cells and visual mappings are loaded from `buildings.json`; no duplicate C++ definition table is authoritative. The values in C8 are the default dataset for that file and remain provisional only until the economy scenarios in E3 pass.
+Storage needs no worker and produces nothing; it only adds capacity and serves food and water. All rates, costs, dimensions, utility demands, access cells, services and visual mappings are loaded from `buildings.json`, which exists from P05 on; no C++ definition table is ever written. The values in C8 are the default dataset for that file and remain provisional only until the economy scenarios in E3 pass.
 
 ### C9. Proposed file structure
 
@@ -724,61 +776,65 @@ Storage is deliberately passive. All rates, costs, dimensions, utility demands, 
 
 ```text
 TJE_Framework/
-├── CMakeLists.txt                         [M]
-├── README.md                              [M: build/run instructions]
+├── CMakeLists.txt                         [M: game + headless arkfall_tests/CTest — done]
+├── README.md                              [M: build, tests, debug keys — done]
 ├── src/
-│   ├── main.cpp                           [M: unified shutdown]
+│   ├── main.cpp                           [M: unified shutdown — done P01; --scenario P05]
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
-│   │   ├── arkfall_types.h                 [N: records/enums/commands — started]
-│   │   ├── json_data.h / .cpp                [N: JSON validation/helpers — done]
-│   │   ├── world_transform.h / .cpp          [N: matrix/yaw conventions — done]
-│   │   ├── surface_height_map.h / .cpp       [N: visual floor height — done]
-│   │   ├── fixed_step_clock.h                [N: 1/30 s accumulator — done]
-│   │   ├── asset_catalog_resources.cpp       [N: GPU half of AssetCatalog — done]
-│   │   ├── scenario_loader.h / .cpp           [N: scenario + catalog loading]
-│   │   ├── colony_simulation.h / .cpp       [N: gameplay]
-│   │   ├── navigation_grid.h / .cpp         [N: occupancy/BFS]
-│   │   ├── colony_world.h / .cpp            [N: EntityMesh/render adapter]
-│   │   ├── scene_parser.h / .cpp              [M: parse scene.json into views]
-│   │   ├── strategy_camera.h / .cpp         [N: camera controller]
-│   │   ├── colony_ui.h / .cpp               [N: HUD/panels/input]
-│   │   └── asset_catalog.h / .cpp           [N: JSON asset/material registry]
+│   │   ├── arkfall_types.h                 [N: IDs, Cell, Zone, DoorPortal, Job, states — P03; commands P04]
+│   │   ├── data_load_error.h               [N: file + JSON pointer + message — done]
+│   │   ├── json_data.h / .cpp              [N: shared JSON helpers — done]
+│   │   ├── asset_catalog.h / .cpp          [N: assets/materials JSON, headless — done]
+│   │   ├── asset_catalog_resources.cpp     [N: shaders and meshes, needs GL — done]
+│   │   ├── scene_parser.h / .cpp           [M: scene.json → static instances — done]
+│   │   ├── scenario_loader.h / .cpp        [N: scenario.json + scene blocker check — done P03]
+│   │   ├── colonist_catalog.h / .cpp       [N: colonists.json roles — done P03; names P05]
+│   │   ├── building_catalog.h / .cpp       [N: buildings.json, 13 types — P05]
+│   │   ├── navigation_grid.h / .cpp        [N: zones, doors, BFS — done P03]
+│   │   ├── colony_simulation.h / .cpp      [N: gameplay records and ticks — P03 onward]
+│   │   ├── fixed_step_clock.h              [N: 1/30 s accumulator — done]
+│   │   ├── world_transform.h / .cpp        [N: matrix and yaw conventions — done]
+│   │   ├── surface_height_map.h / .cpp     [N: visual floor height — done]
+│   │   ├── colony_world.h / .cpp           [N: EntityMesh, views, overlay; syncVisuals P04]
+│   │   ├── strategy_camera.h / .cpp        [N: P04]
+│   │   └── colony_ui.h / .cpp              [N: P04 onward]
 │   ├── framework/
 │   │   ├── entities/entity.h / .cpp         [E]
-│   │   ├── input.cpp                       [M: wheel reset]
-│   │   └── audio.cpp                       [M: cleanup/failure handling]
+│   │   ├── input.cpp                       [M: wheel reset — done]
+│   │   └── audio.cpp                       [M: cleanup/failure handling — P11]
 │   └── graphics/
-│       └── mesh.cpp                        [M: bounded MTL/OBJ handling]
+│       └── mesh.cpp                        [M: bounded MTL/OBJ handling — done]
 ├── libraries/
-│   └── nlohmann_json/                       [N: pinned header + license]
+│   └── nlohmann_json/                       [N: pinned header + license — done]
 ├── data/
 │   ├── arkfall/
-│   │   ├── scene.json                      [N: static scene instances]
-│   │   ├── scenario.json                   [N: grid + initial game state]
-│   │   ├── assets.json                     [N: asset paths/transforms]
-│   │   ├── buildings.json                  [N: 13 building definitions]
-│   │   ├── colonists.json                  [N: role archetypes/visuals]
+│   │   ├── scene.json                      [N: static visuals, generated from scenario.json]
+│   │   ├── scenario.json                   [N: grid, base, door, deposits, start state]
+│   │   ├── assets.json                     [N: asset paths/transforms/shaders]
+│   │   ├── buildings.json                  [N: 13 building definitions — P05]
+│   │   ├── colonists.json                  [N: role visuals/speed — P03; names P05]
 │   │   ├── materials.json                  [N: semantic palette/tints]
+│   │   ├── dev/*.json                      [N: dev/test scenarios — P05 onward]
 │   │   ├── models/*.obj / *.mtl             [N: selected runtime copies]
 │   │   └── License.txt                     [N: copied asset license]
 │   ├── shaders/
-│   │   ├── basic.vs                        [E]
-│   │   ├── arkfall_lit.fs                  [N]
-│   │   └── flat.fs                         [E]
-│   └── audio/*.wav                         [N: delivery gate]
+│   │   ├── basic.vs, instanced.vs          [E]
+│   │   ├── arkfall_lit.fs                  [N: MTL-coloured lighting — done]
+│   │   └── flat.fs                         [E: debug overlay]
+│   └── audio/*.wav                         [N: delivery gate — P11]
 ├── tools/
 │   └── generate_arkfall_scene.py           [N: scene.json from scenario.json — done]
-└── tests/                                  [N: arkfall_tests target + ctest — done]
+└── tests/                                  [N: headless arkfall_tests]
     ├── test_harness.h / test_main.cpp      [N: done]
-    ├── json_data_tests.cpp, world_transform_tests.cpp,
-    │   timing_and_surface_tests.cpp,
-    │   shipped_data_tests.cpp              [N: done]
-    ├── navigation_tests.cpp                [N: P03]
-    └── simulation_tests.cpp                [N: P05+]
+    ├── json_data, world_transform, timing_and_surface,
+    │   shipped_data tests                  [N: done]
+    ├── navigation, scenario, simulation tests [N: done P03]
+    └── building, production, survival, construction,
+        economy and outcome tests           [N: P05–P11]
 ```
 
-Keep new gameplay sources directly in `src/game`, which existing CMake already scans. Add an explicit test target outside that glob. Pin and vendor the single-header `nlohmann/json` dependency under `libraries/nlohmann_json/`, record its exact version and license, and include it through CMake. Do not hand-roll JSON tokenization or use the framework `TextParser` for JSON.
+Keep new gameplay sources directly in `src/game`, which existing CMake already scans. The separate `arkfall_tests` target compiles only the headless sources listed in `ARKFALL_HEADLESS_SOURCES`; every new headless source is added there together with its tests. Pin and vendor the single-header `nlohmann/json` dependency under `libraries/nlohmann_json/`, record its exact version and license, and include it through CMake. Do not hand-roll JSON tokenization or use the framework `TextParser` for JSON.
 
 #### C9.1 Data and scene loading contract
 
@@ -786,15 +842,15 @@ The exact replacement API is `SceneLoadResult SceneParser::parse(const std::file
 
 `SceneParser` is required in P02. Modify the existing `TJE_Framework/src/game/scene_parser.*` implementation so it parses `data/arkfall/scene.json` through the pinned JSON library and produces static scene records for `ColonyWorld`. It must not create simulation state or own the asset cache. `AssetCatalog` resolves asset IDs to loaded meshes/materials; `ColonyWorld` creates and owns render views. Remove the unfinished `@tag` branch and implicit `"data/" + name` path construction. Use the exact replacement API specified below; there must be exactly one scene-loading contract.
 
-`scenario.json` is loaded by `ScenarioLoader` and defines grid dimensions/origin/cell size, indoor region, boundary segments, Exit Door portal cells, deposit cells/types, static blockers, exterior spawn cells, initial colonist IDs/archetypes/roles/positions/needs, initial inventory, ark passenger count and initial run state. The shipped scenario starts with no constructed buildings. Runtime buildings and colonists are spawned from simulation state, not duplicated as static entries in `scene.json`.
+`scenario.json` is loaded by `ScenarioLoader`. Implemented in P03: `grid` (width, height, cellSize, originXZ), `base.interior` (rectangle) and `base.exitDoors[]` (door sockets: id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell), `staticBlockers[]` (id, inclusive cell rectangle), `initialColonists[]` (id, job, cell, needs) and the optional temporary `debugRoute`. Added later, each together with its loader: `initialInventory`, `cargoCapacity` and `initialBuildings[]` (type, origin, quarter turns; empty in the shipped scenario) in P05; `arkPassengers` and `arrivalDefaultJob` in P09. The schema version stays 1 during development because every scenario file is updated in the same commit as its loader. The shipped scenario starts with no constructed buildings. Runtime buildings and colonists are spawned from simulation state, not duplicated as static entries in `scene.json`. Dev and test scenarios live in `data/arkfall/dev/` and are selected with `--scenario <path>`.
 
-`scenario.json` also defines `arrivalDefaultJob` (MVP default `engineer`) and the deterministic name-allocation policy/input where scenario-specific names are required. Initial actors use the fixed role counts in F3; the loader must verify exactly 12 colonists, four Engineers, six Miners and two Farmers at startup.
+`arrivalDefaultJob` (MVP default `engineer`) sets the job of rocket arrivals. The shipped start uses the fixed cast in F3 (12 colonists: four Engineers, six Miners, two Farmers). That cast is checked by `shipped_data_tests`, not by the loader, so dev and test scenarios may use other casts.
 
-`scene.json` contains every static visual instance present in the shipped map: terrain/floor modules, boundary visuals, deposits and decorative props. It does not contain unused library assets or dynamic colonists/buildings. `assets.json` is the registry of every asset allowed in the build; unused assets are not loaded. The scene stores stable `assetId`, transform, optional material override and `blocksNavigation` flag. `assets.json` fields per ID: relative model path under `data/arkfall/models/`, material/MTL path or generated-geometry recipe, default scale, pivot/ground offset, semantic forward axis, visual-picking bounds and whether load failure is fatal. `buildings.json` contains exactly the 13 MVP types and includes zone, integer-cell footprint per quarter-turn, required deposit, build cost/time, worker role/slots, access offsets, utility inputs/outputs, production recipe/rate, storage effect, visual composition/material IDs and user-facing label. `colonists.json` defines the three role archetypes, visual asset, tint/material ID and role capabilities. `materials.json` defines semantic color/tint IDs; OBJ/MTL remains the source of mesh material properties unless an explicit override is defined. `scenario.json` overrides starting records only; it must not duplicate building or role definitions.
+`scene.json` contains every static visual instance present in the shipped map: terrain/floor modules, boundary visuals, pre-built door gates, deposits and decorative props. It is generated from `scenario.json` and `assets.json` by `tools/generate_arkfall_scene.py` and is not edited by hand. It does not contain unused library assets or dynamic colonists/buildings. `assets.json` is the registry of every asset allowed in the build; unused assets are not loaded. The scene stores stable `assetId`, transform, optional material override and `blocksNavigation` flag. `assets.json` holds the shader paths (standard, instanced, lit fragment, debug fragment) and, per asset ID: OBJ and MTL paths under `data/arkfall/models/`, material ID, uniform default scale, pivot offset, semantic forward axis, picking bounds, `walkableSurface` and whether load failure is fatal. `buildings.json` contains exactly the 13 MVP types: id, label, zone, placement (`footprint` or `doorSocket`), footprint `[w, h]` at 0°, required deposit, cost, construction role/slots/seconds, operating role/slots, access offsets at 0°, services (`eat`, `drink`), power demand/output, water demand/output, oxygen capacity, storage capacity, recipe and visual composition (asset, offset, yaw, scale multiplier). Absent features are explicit `null`/`0`, never missing keys. `colonists.json` defines one role per job (visual asset, role tint material, `moveSpeed`) and, from P05, the unique name pool; role/building compatibility lives only in `buildings.json`. `materials.json` defines semantic color/tint IDs; OBJ/MTL remains the source of mesh material properties unless an explicit override is defined. `scenario.json` overrides starting records only; it must not duplicate building or role definitions.
 
 JSON validation happens before creating the GL scene or starting simulation. Errors identify file, JSON path (for example `buildings[3].footprint[1]`) and expected/actual value. Reject duplicate IDs, missing references, unknown enum strings, non-finite numbers, negative costs/rates, invalid footprints, out-of-grid coordinates, missing model/MTL files, paths escaping `data/`, invalid portal pairs, impossible spawn counts and scenario references to undefined types/assets. Fatal load errors show one useful startup message and exit through unified cleanup; never run a partially loaded game. Gameplay-critical fields have no implicit defaults: missing fields are errors.
 
-Final MVP startup order is fixed: (1) parse and schema-check the six JSON files; (2) cross-validate IDs, paths, grid, portal, spawn, footprints and blockers; (3) load referenced meshes/materials/shaders into `AssetCatalog`; (4) build static views via `SceneParser`; (5) build `NavigationGrid` and inventory from `scenario.json`; (6) initialize `ColonySimulation` with explicit initial records; (7) spawn dynamic views and show title/help. During earlier phases, the asset preview may load only `assets.json`, `materials.json` and `scene.json`; it must not start partial gameplay. Any failure unwinds already created views/resources in reverse ownership order and exits through P01's common shutdown path. Simulation must remain callable headlessly without loading the GL scene.
+Final MVP startup order is fixed: (1) parse and schema-check the six JSON files; (2) cross-validate IDs, paths, grid, portal, spawn, footprints and blockers; (3) load referenced meshes/materials/shaders into `AssetCatalog`; (4) build static views with `ColonyWorld::buildStaticViews` from the `SceneParser` result; (5) build `NavigationGrid` and inventory from `scenario.json`; (6) initialize `ColonySimulation` with explicit initial records; (7) spawn dynamic views and show title/help. During earlier phases, the asset preview may load only `assets.json`, `materials.json` and `scene.json`; it must not start partial gameplay. Any failure unwinds already created views/resources in reverse ownership order and exits through P01's common shutdown path. Simulation must remain callable headlessly without loading the GL scene.
 
 `map.txt` is removed from the implementation contract. Grid geometry/start state lives in `scenario.json`; renderable static placements live in `scene.json`; reusable type constants live in catalog JSON files. This keeps logical topology, visual layout and definitions distinct while making runtime content data-driven.
 
@@ -803,28 +859,55 @@ Example `buildings.json` fragment (illustrative values; all production values co
 ```json
 {
   "schemaVersion": 1,
-  "buildings": [{
-    "id": "storage", "zone": "interior", "footprint": [[2, 2]],
-    "cost": {"steel": 5}, "buildSeconds": 10,
-    "workers": {"role": "engineer", "slots": 1},
-    "accessOffsets": [[-1, 0], [2, 0], [0, -1], [1, -1]],
-    "powerDemand": 0, "waterPerSecond": 0,
-    "storageCapacity": 100,
-    "visuals": [{"assetId": "storage_barrels", "offset": [0, 0, 0]}]
-  }]
+  "buildings": [
+    {
+      "id": "storage", "label": "Storage", "zone": "interior", "placement": "footprint",
+      "footprint": [2, 2], "requiredDeposit": null, "cost": {"steel": 5},
+      "construction": {"role": "engineer", "slots": 1, "seconds": 10},
+      "operation": null,
+      "accessOffsets": [[-1, 0], [2, 0], [0, -1], [1, -1]],
+      "services": ["eat", "drink"],
+      "power": {"demand": 0, "output": 0}, "water": {"demand": 0, "output": 0},
+      "oxygenCapacity": 0, "storageCapacity": 100, "recipe": null,
+      "visuals": [{"assetId": "storage_barrels", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1}]
+    },
+    {
+      "id": "iron_mine", "label": "Iron Mine", "zone": "exterior", "placement": "footprint",
+      "footprint": [2, 2], "requiredDeposit": "iron", "cost": {"steel": 5},
+      "construction": {"role": "engineer", "slots": 1, "seconds": 15},
+      "operation": {"role": "miner", "slots": 5},
+      "accessOffsets": [[-1, 0], [2, 1]], "services": [],
+      "power": {"demand": 4, "output": 0}, "water": {"demand": 0, "output": 0},
+      "oxygenCapacity": 0, "storageCapacity": 0,
+      "recipe": {"inputs": {}, "outputs": {"ironOre": 1}, "seconds": 5, "perPresentWorker": true},
+      "visuals": [{"assetId": "iron_mine_machine", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1}]
+    }
+  ]
 }
 ```
 
-Example `scenario.json` fragment (initial actors/resources are explicit, never hidden in C++):
+Example `scenario.json` for the shipped start after P09, with one of the 12 initial colonists shown (initial actors/resources are explicit, never hidden in C++; the P03 file contains the first six keys plus `debugRoute`):
 
 ```json
 {
-  "schemaVersion": 1, "grid": {"width": 64, "height": 64, "cellSize": 1,
-  "originXZ": [-32, -32]}, "initialInventory": {"steel": 60,
-  "components": 20, "vegetables": 20}, "arkPassengers": 188,
-  "initialColonists": [{"id": 1, "archetype": "engineer",
-  "job": "engineer", "cell": [18, 31], "needs":
-  {"hunger": 100, "thirst": 100, "oxygen": 100}}]
+  "schemaVersion": 1,
+  "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32, -32]},
+  "base": {
+    "interior": {"min": [24, 24], "max": [39, 39]},
+    "exitDoors": [{"id": "west_door", "openAtStart": false,
+      "crossings": [{"outside": [23, 31], "inside": [24, 31]},
+                    {"outside": [23, 32], "inside": [24, 32]}]}]
+  },
+  "deposits": [{"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
+               {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}],
+  "staticBlockers": [],
+  "initialColonists": [{"id": 1, "job": "engineer", "cell": [18, 31],
+    "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}}],
+  "initialInventory": {"steel": 60, "components": 20, "vegetables": 20},
+  "cargoCapacity": 100,
+  "initialBuildings": [],
+  "arkPassengers": 188,
+  "arrivalDefaultJob": "engineer"
 }
 ```
 
@@ -843,7 +926,7 @@ The loader resolves arrays into typed records and checks cross-file invariants: 
 
 Static scene instances with the same asset/material are grouped into one instanced render entity. The full 64×64 terrain is a single generated/instanced terrain group with 4,096 transforms and one draw call per compatible material; never create 4,096 `Entity` nodes or draw calls. P02 acceptance includes verifying this bound in the framework's draw-call counter. Scene-parser grouping is required for repeated models; P11 may add further instancing only after profiling.
 
-Initial colonist names are selected deterministically from the unique-name pool in `colonists.json` in stable colonist-ID order. If the pool has fewer than 200 unique names, data validation fails; do not silently duplicate a display name. Role/job compatibility and operational worker assignments are the exact C8 matrix loaded into `buildings.json`.
+Initial colonist names are selected deterministically from the unique-name pool in `colonists.json` in stable colonist-ID order. If the pool has fewer unique names than the initial colonists plus `arkPassengers` (200 for the shipped scenario), data validation fails; do not silently duplicate a display name. Role/job compatibility and operational worker assignments are the exact C8 matrix loaded into `buildings.json`.
 
 ### C9.2 Required use of theory code and concepts
 
@@ -859,7 +942,7 @@ Initial colonist names are selected deterministically from the unique-name pool 
 | AI and navigation | T13: state-machine transition pattern, goal selection and pathfinding. | Adapt the state-machine pattern. Prefer the specified four-neighbor BFS over the broken/stale A* integration; do not call absent `AStarFindPathNoTieDiag`. |
 | UI | T16: orthographic HUD, pointer hit testing and render order/state handling. | Adapt to the existing `Camera::setOrthographic`, `drawText` and SDL input; restore GL state explicitly. |
 | Asset ingestion | T14: placeholders, asset preparation and integration workflow. | Verify each selected OBJ/MTL in the actual loader and keep licenses with runtime copies. |
-| Performance | T09: culling, batching/instancing and profiling. | Measure the baseline first; only introduce instancing when recorded CPU/GPU costs justify it. |
+| Performance | T09: culling, batching/instancing and profiling. | Static scene groups (terrain) and colonist views are instanced by design (C9.1); any further batching or culling only after profiling (P11). |
 | Audio and delivery | T17: audio initialization/playback/lifecycle; T19: menu, help, loading, outcome and packaging checklist; T22: scope/maintainability. | Follow at H5; inspect BASS headers/runtime DLL availability and course submission requirements rather than assuming historical slide details. |
 
 Do not add features solely because a lecture contains a snippet. Reuse is mandatory where applicable; feature scope still follows MVP/GDD precedence.
@@ -868,24 +951,25 @@ Do not add features solely because a lecture contains a snippet. Reuse is mandat
 
 ### Shared build and validation procedure
 
-Run from `repo_compartido/TJE_Framework` (tests: `cmake --build build/arkfall_mvp --config Debug --target arkfall_tests` then `ctest --test-dir build/arkfall_mvp -C Debug --output-on-failure`; scene/scenario consistency: `python tools/generate_arkfall_scene.py --check`):
+Run from `repo_compartido/TJE_Framework` (the same commands as the framework README):
 
 ```powershell
-cmake -S . -B build/arkfall_mvp -G "Visual Studio 17 2022" -A x64
-cmake --build build/arkfall_mvp --config Debug --target TJE_Framework
-.\build\arkfall_mvp\Debug\TJE_Framework.exe
+cmake -S . -B build
+cmake --build build --config Debug --target TJE_Framework arkfall_tests
+ctest --test-dir build -C Debug --output-on-failure
+python tools/generate_arkfall_scene.py --check
+.\build\Debug\TJE_Framework.exe
 ```
 
-Use a fresh build directory because the old top-level cache references a different source location. Run from the framework directory so existing relative `data/...` paths resolve.
+Run the game from the framework directory so the relative `data/...` paths resolve.
 
-After each step, build Debug, execute its focused acceptance scenario and inspect the console for missing assets, GL errors and unexpected state transitions. Add Release validation at integration milestones and in P11.
-
-These commands are proposed checks, not commands already executed.
+After each step: build Debug, run `arkfall_tests` (every step adds its headless tests), run the scene/scenario check when data changed, execute the step's focused acceptance scenario, and inspect the console for missing assets, GL errors and unexpected state transitions. Add Release validation at integration milestones and in P11.
 
 ### P01 — Establish a dependable application boundary
 
 **Covers:** foundation for every requirement.  
-**Dependencies:** none.
+**Dependencies:** none.  
+**Status:** done. Escape still quits the game; P04 turns it into cancel/close and P10 adds the menu.
 
 **Files:** existing `TJE_Framework/src/main.cpp`, `TJE_Framework/src/game/game.h`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/framework/input.cpp`; CMake only as necessary for build/test configuration.
 
@@ -905,7 +989,8 @@ These commands are proposed checks, not commands already executed.
 ### P02 — Prove selected assets and a renderable scene
 
 **Covers:** MVP-01 foundation.  
-**Dependencies:** P01.
+**Dependencies:** P01.  
+**Status:** done; see [P02_asset_report.md](P02_asset_report.md), including the 24 Nov corrections.
 
 **Files:** new `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`; modified existing `TJE_Framework/src/game/scene_parser.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/graphics/mesh.cpp` and CMake for the pinned JSON header; new `TJE_Framework/data/arkfall/{assets,materials,scene}.json`, selected runtime model copies and `TJE_Framework/data/shaders/arkfall_lit.fs`.
 
@@ -933,13 +1018,14 @@ Use uniform asset scaling initially; this keeps the existing basic vertex shader
 ### P03 — Prove navigation through the Exit Door
 
 **Covers:** MVP-01, MVP-05 foundation.  
-**Dependencies:** P02.
+**Dependencies:** P02.  
+**Status:** done; see [P03_navigation_report.md](P03_navigation_report.md).
 
 **Files:** new `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/data/arkfall/scenario.json`; modified `TJE_Framework/src/game/colony_world.h/.cpp`.
 
 **First observable result:** one colonist walks between a mine access point, the Exit Door and Storage. This follows the risk-first instruction in MVP p. 2.
 
-**Already in place before P03 (24 Nov 2026):**
+**Prepared before P03 (24 Nov 2026; all of it is now implemented):**
 
 - `data/arkfall/scenario.json` (schema 1) exists and is the source of truth for the grid (`64×64`, 1 m, origin `[-32,-32]`), the interior rectangle, `base.exitDoors[]` (id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell — deposit cells block), `staticBlockers[]` (id, inclusive `min`/`max` cell rectangle), `initialColonists[]` (id, job, cell, needs) and the temporary `debugRoute` (colonist id, `loop`, labelled stop cells). P03 writes the strict C++ `ScenarioLoader` for exactly this schema using `json_data` (`readCell`, `readInt`, `readEnum`, `readFloatInRange`, `requireArray`, `validateKeys`, `checkSchemaVersion`) and the shared types in `arkfall_types.h` (`Cell`, `Zone`, `DoorPortal`, `DepositDefinition`, `ColonistState`, `Route`).
 - Scripted route stops: iron mine access `(9,12)` (east of the iron deposit `(8,12)`), door crossing `(23,31)→(24,31)`, Storage access `(32,33)` (west of the 2×2 `storage_preview` footprint `(33..34, 32..33)`). The colonist starts at `(18,31)`.
@@ -985,25 +1071,29 @@ while remaining > 0 and route has next point:
 ### P04 — Add camera, selection and minimal command UI
 
 **Covers:** MVP-02, MVP-03, MVP-15 foundation.  
-**Dependencies:** P03.
+**Dependencies:** P03.  
+**Status:** next.
 
-**Files:** new `TJE_Framework/src/game/strategy_camera.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`; modified `TJE_Framework/src/game/game.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`.
+**Files:** new `TJE_Framework/src/game/strategy_camera.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`; modified `TJE_Framework/src/game/game.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp` (view sync and picking), `TJE_Framework/src/game/colony_simulation.h/.cpp` (command queue), `TJE_Framework/src/game/arkfall_types.h` (`GameCommand`, `CommandResult`).
 
 **Changes:**
 
 1. Track focus position, yaw, pitch and orbit distance.
-2. Default to approximately 50° downward view.
-3. Implement WASD pan, Q/E rotation, middle-drag rotation and wheel zoom.
-4. Keep the cursor unlocked during normal play.
+2. Default to approximately 50° downward view, framing the base and both deposits (GDD 3.2).
+3. Implement WASD pan, Q/E rotation, middle-drag rotation and wheel zoom with distance limits; add optional edge scrolling (GDD 3.3) behind a toggle.
+4. Remove the framework example controls still in `Game`: left-drag camera rotation and the middle-click mouse lock. Keep the cursor unlocked during normal play.
 5. Recalculate view/projection before picking.
 6. Generate rays using verified `Camera::getRayDirection`.
-7. Pick nearest positive hit; use bounds first, mesh intersection when necessary.
+7. Pick nearest positive hit; use bounds first, mesh intersection when necessary. Picking returns simulation IDs (`ColonistId`, later `BuildingId`): each dynamic instance keeps its ID and is tested with its transformed picking bounds.
 8. Consume UI clicks before world selection.
 9. Add build-button shell, object popup and debug resource display.
+10. Add the `GameCommand` queue and `ColonySimulation::apply`, applied once per frame before the ticks (C4); route the P03 debug keys through it.
+11. Move the per-frame view sync and the debug overlay out of `Game` into `ColonyWorld::syncVisuals(simulation, alpha)`.
+12. Add a pause toggle through `FixedStepClock::setPaused` (GDD: −/+ for pause and speed; a speed multiplier is optional). Escape cancels or closes the current mode or popup and no longer quits; until the P10 menu exists, quit with the window close button.
 
 **Input contract:** UI hit testing uses drawable/logical coordinate conversion after resize; UI receives pointer input first. In world mode, left-click selects the nearest positive ray hit; equal-distance ties resolve by stable entity ID. In build mode, the ray intersects the y=0 placement plane, snaps to a 1 m cell center and updates the ghost. R rotates the ghost by 90°; left-click commits only when server-side/simulation-side `validatePlacement` returns valid; right-click or Escape cancels the unplaced ghost. Invalid ghosts show a concise reason, not color alone. UI buttons capture mouse-down and mouse-up consistently so dragging from a button into the world cannot place a building.
 
-**Acceptance:** clicking UI does not select objects behind it; camera still works while simulation is paused; selection survives camera rotation and resize.
+**Acceptance:** clicking UI does not select objects behind it; left click never rotates the camera; camera still works while simulation is paused; selection survives camera rotation and resize; the initial view shows the base and both deposits; Escape never quits the game.
 
 Use the current `Camera::getRayDirection` implementation and verify whether the returned direction is normalized and in world space before computing distances. Convert SDL logical mouse coordinates to drawable pixels when high-DPI scaling is active. Recompute view/projection before ray generation. Selection is visual picking only; grid occupancy remains authoritative for movement/building collision.
 
@@ -1014,39 +1104,43 @@ Use the current `Camera::getRayDirection` implementation and verify whether the 
 **Covers:** MVP-06, MVP-09 and part of MVP-10.  
 **Dependencies:** P04.
 
-**Files:** `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/data/arkfall/colonists.json`.
+**Files:** new `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/data/arkfall/buildings.json`, `TJE_Framework/data/arkfall/dev/production.json`, `TJE_Framework/tests/building_tests.cpp`, `TJE_Framework/tests/production_tests.cpp`; modified `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/main.cpp` (`--scenario`), `TJE_Framework/data/arkfall/{assets,colonists,scenario}.json`, the needed building model copies and `TJE_Framework/tools/generate_arkfall_scene.py`.
 
-Use a **temporary developer scenario** with completed mine, Storage and Iron Processor; this is not the shipped starting scenario.
+Use a **temporary developer scenario** (`data/arkfall/dev/production.json`) with completed mine, Storage and Iron Processor; this is not the shipped starting scenario.
 
 **Changes:**
 
-1. Add stable colonist/building IDs and role assignment commands.
-2. Implement item inventory and capacity queries.
-3. Add work-slot reservation/release.
-4. Assign nearest reachable eligible jobs.
-5. Produce ore only from physically present Miners.
-6. Add iron→Steel atomic processing.
-7. Make full capacity and missing inputs invalidate production jobs.
-8. Display current task, workers present/reserved and blocking reason.
+1. Create `buildings.json` with all 13 definitions and the C8 values, and a strict `BuildingCatalog` loader (schema in C9.1). Every later step reads these definitions; no C++ table of building values is ever written.
+2. Add building records with stable `BuildingId`s. Footprints block their cells in `NavigationGrid` (bumping the revision) and access cells are validated. An Exit Door building completes onto a door socket and opens it.
+3. Extend `scenario.json` with `initialInventory`, `cargoCapacity` and `initialBuildings` (empty in the shipped scenario). `Game` takes the scenario path from `--scenario <path>` (default `data/arkfall/scenario.json`); tests load dev scenarios directly.
+4. Spawn building views from their `buildings.json` visuals (copy the needed OBJ/MTL into `data/arkfall/models` and register them in `assets.json`). Remove the P02/P03 placeholder blockers (`oxygenator_preview`, `storage_preview`) from `scenario.json` and regenerate `scene.json`.
+5. Add colonist names from a unique pool in `colonists.json`, and role assignment commands.
+6. Implement item inventory and capacity queries, including the temporary cargo capacity used until the first Storage completes.
+7. Add work-slot reservation/release.
+8. Assign nearest reachable eligible jobs.
+9. Produce ore only from physically present Miners.
+10. Add iron→Steel atomic processing.
+11. Make full capacity and missing inputs invalidate production jobs.
+12. Display current task, workers present/reserved and blocking reason.
 
 **Acceptance:** a Miner travels to work, produces ore, and eventually staffs an available processor; changing role releases the old slot. Full Storage never deletes resources.
 
-**Test:** two Miners competing for the last slot; repeated job changes; processing while inventory is exactly full.
+**Test:** two Miners competing for the last slot; repeated job changes; processing while inventory is exactly full; `buildings.json` rejection cases (missing type, duplicate id, unknown role or deposit, invalid footprint or access offset, unknown visual asset).
 
 ### P06 — Add survival and utility dependencies
 
 **Covers:** MVP-07, MVP-08, MVP-11 and MVP-14 foundation.  
 **Dependencies:** P05.
 
-**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,colonists,scenario}.json`.
+**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,colonists,scenario}.json`, `TJE_Framework/data/arkfall/dev/survival.json`, `TJE_Framework/tests/survival_tests.cpp`.
 
 **Changes:**
 
 1. Add the three needs and per-tick decay.
 2. Add power snapshot evaluation.
 3. Add water flow and allocation.
-4. Add indoor oxygen coverage, mine oxygen and suit consumption.
-5. Implement service navigation and refill states.
+4. Add indoor oxygen coverage, mine oxygen, suit consumption and the suit refill on inward crossing of a powered door with base oxygen coverage (an unpowered door stays passable).
+5. Implement service navigation and refill states using the `eat`/`drink` services declared in `buildings.json` (MVP: Storage), plus the idle rule of C6.
 6. Implement Farmer occupancy and vegetable production.
 7. Add interruption/release/retry handling.
 8. Mark deaths, release tasks and update living population.
@@ -1074,11 +1168,11 @@ A building completed during a tick becomes operational on the next tick. Use thi
 **Covers:** MVP-04 and completes its integration with MVP-05/08.  
 **Dependencies:** P06.
 
-**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,colonists,materials,scenario}.json`.
+**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{assets,buildings,colonists,materials,scenario,scene}.json`, `TJE_Framework/data/arkfall/models/*` (all building visuals), `TJE_Framework/data/arkfall/dev/p03_navigation.json`, `TJE_Framework/tools/generate_arkfall_scene.py`, `TJE_Framework/tests/construction_tests.cpp`, `TJE_Framework/tests/shipped_data_tests.cpp`.
 
 **Changes:**
 
-1. Load and validate exactly 13 definitions from `buildings.json`; remove the duplicate C++ source-of-truth table.
+1. Use the 13 `buildings.json` definitions from P05 for placement; any missing field is added to that file and its loader, never to C++.
 2. Add Interior/Exterior build tabs.
 3. Preview footprint, orientation and validity.
 4. Rotate footprints in 90° increments with R.
@@ -1087,7 +1181,11 @@ A building completed during a tick becomes operational on the next tick. Use thi
 7. Assign one nearest Engineer to its construction access.
 8. Accumulate progress only while that Engineer is present.
 9. Preserve progress when interrupted.
-10. Switch to the JSON-defined no-base, 12-colonist starting scenario and validate its full bootstrap build order before release.
+10. Switch to the JSON-defined no-base, 12-colonist starting scenario and validate its full bootstrap build order before release. `shipped_data_tests` checks the 12-colonist cast (4/6/2), cargo and passenger values; the loader does not.
+11. The door socket starts closed (`openAtStart: false`); building the Exit Door on it opens it. The scene generator emits a gate only for sockets that start open; otherwise the gate is the Exit Door building's visual.
+12. Move the P03 navigation scenario (single colonist plus `debugRoute`) to `data/arkfall/dev/p03_navigation.json`; the shipped scenario has no `debugRoute`.
+13. Mines: the footprint must contain exactly one free deposit of the required resource (C5). Switch the copper deposit visual to `rock_crystals.obj` so the two deposit types are easy to tell apart.
+14. Copy and register the remaining building visuals (A5); the Solar Panel uses a small team-authored OBJ/MTL instead of generated geometry.
 
 Construction payment occurs once at placement. Canceling the unplaced ghost is free. For MVP, placed blueprints cannot be demolished/canceled; say this in the UI rather than implying a refund mechanic.
 
@@ -1100,7 +1198,7 @@ Construction payment occurs once at placement. Canceling the unplaced ghost is f
 **Covers:** MVP-09, MVP-10, MVP-13 foundation.  
 **Dependencies:** P07.
 
-**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`.
+**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/building_catalog.h/.cpp` (only if a new field is needed), `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,scenario}.json` and dev scenarios, `TJE_Framework/tests/economy_tests.cpp`.
 
 **Changes:**
 
@@ -1110,7 +1208,7 @@ Construction payment occurs once at placement. Canceling the unplaced ghost is f
 4. Add additional Storage construction/capacity.
 5. Expose production-blocked reasons and storage occupancy.
 6. Verify the scheduler eventually staffs processors when mines cannot output.
-7. Add a simple enabled/disabled control for producers if playtesting exposes storage saturation traps; keep this separate from deferred priority mechanics.
+7. Add a simple enabled/disabled control for every building with an operating cost (producers and consumers). It resolves storage saturation and lets the player recover from an all-or-nothing brownout (C7); keep it separate from deferred priority mechanics.
 
 **Acceptance:** 300 Aurite can be accumulated through normal mining/processing; no raw ore can pay a Steel/Component construction cost.
 
@@ -1123,12 +1221,12 @@ Construction payment occurs once at placement. Canceling the unplaced ghost is f
 **Covers:** MVP-12, MVP-13, MVP-14.  
 **Dependencies:** P08.
 
-**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`.
+**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp` (`arkPassengers`, `arrivalDefaultJob`), `TJE_Framework/data/arkfall/scenario.json`, `TJE_Framework/tests/outcome_tests.cpp`.
 
 **Changes:**
 
-1. Add a “Call rocket” action to a completed powered Landing Pad popup; selection alone must not trigger repeated arrivals.
-2. Validate that the full batch has legal exterior spawn cells and a route to the base.
+1. Add a “Call rocket” button to the popup of a completed, powered Landing Pad and the GDD shortcut (select the pad, press L); selection alone must not trigger repeated arrivals.
+2. Spawn the batch on the free access cells around the called Landing Pad, then on the nearest free exterior cells found by BFS from the pad; check that every arrival has a route to the base before committing.
 3. Commit passenger decrement and spawn batch together.
 4. Spawn each colonist with full needs and the `arrivalDefaultJob` specified in `scenario.json` (MVP default: Engineer); choose names deterministically from the colonist catalog.
 5. Require role reassignment through the existing popup.
@@ -1154,7 +1252,7 @@ Retain total passenger accounting: initial 12 plus 188 aboard, with deaths never
 3. Add construction progress, occupancy, operation and blocking reason to building popup.
 4. Show objective progress: Beacon, Aurite and population.
 5. Implement contextual Escape/right-click cancellation.
-6. Add outcome panels with Restart and Menu buttons.
+6. Add a minimal title/menu screen (Start, Help, Quit) and outcome panels with Restart and Menu buttons. Escape, when there is nothing to cancel, opens an in-game pause menu with Quit.
 7. Reset simulation, reservations, paths, selections, command queues and timing accumulator together.
 8. Reuse application resource caches across restart.
 
@@ -1167,16 +1265,16 @@ Render 3D first, then UI quads and text. `drawText` changes GL depth/culling sta
 **Covers:** all requirements; academic delivery gate.  
 **Dependencies:** P10.
 
-**Files:** `TJE_Framework/tests/navigation_tests.cpp`, `TJE_Framework/tests/simulation_tests.cpp`, `TJE_Framework/CMakeLists.txt`, `TJE_Framework/README.md`, `TJE_Framework/src/framework/audio.cpp`, `TJE_Framework/data/audio/`; rendering changes only where profiling justifies them.
+**Files:** `TJE_Framework/tests/*`, `TJE_Framework/CMakeLists.txt`, `TJE_Framework/README.md`, `TJE_Framework/src/framework/audio.cpp`, `TJE_Framework/data/audio/`; rendering changes only where profiling justifies them.
 
 **Changes:**
 
-1. Add headless tests for navigation and simulation rules.
+1. Extend the headless suites started in P02–P03 with economy, outcome and long-run determinism tests (E2).
 2. Build and play through Debug and Release.
 3. Profile at 100 and 200 living colonists.
 4. Add frustum rejection for fully outside bounds.
 5. Keep mandatory scene/terrain instance groups from P02; batch or instance other repeated meshes only if measured rendering cost warrants it.
-6. Add title/help/loading feedback and action sounds.
+6. Add help/loading feedback (the title/menu exists since P10) and action sounds; keep the P03 debug keys in Debug builds only.
 7. Correct audio failure/cache cleanup before using it.
 8. Package executable, runtime DLLs, data, license and instructions.
 9. Test the package outside Visual Studio and on another machine.
@@ -1198,13 +1296,15 @@ Do not copy example shader/picking signatures from the slides without checking c
 | **H4 — Complete gameplay MVP** | P09–P10 | Grow population, win, lose and restart through UI. |
 | **H5 — Academic delivery** | P11 | Sound, completeness, Release validation and distributable package. |
 
+**Status (24 Nov 2026):** H0 complete; H1 half complete (P03 done, P04 next).
+
 **Critical path:** navigation → reservations/task interruption → survival/services → construction → complete economy → population/outcomes.
 
 Asset detailing, richer animation and advanced rendering must not delay H1–H4.
 
 ### E2. Automated checks worth implementing
 
-Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release.
+Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 52 cases after P03, covering data loading, shipped data, transforms/timing, navigation and P03 movement.
 
 | Test group | Essential cases |
 |---|---|
@@ -1217,7 +1317,7 @@ Use a separate test executable with explicit failure reporting; do not rely only
 | Needs | Threshold interruption, refill hysteresis, zero death, service failure during travel. |
 | Utilities | Exact power boundary; zero generation; all-or-nothing brownout; water shortage/tie order/consumer priority; oxygen capacity 25/26; local mine oxygen isolation; snapshot stable throughout a tick. |
 | State machine | Every allowed transition and rejected transition; simultaneous need thresholds; invalid service/building; role change; death during travel; no stale target/reservation; deterministic replay of same commands. |
-| Construction | Wrong deposit, rotated footprint and access cells, trapped access, portal socket, overlap with deposit/spawn, disconnected service, insufficient cost, interrupted Engineer, invalid ghost cancellation, atomic cost/occupancy. |
+| Construction | Mine without its deposit or on the wrong deposit, non-mine overlapping a deposit or spawn cell, rotated footprint and access cells (all four quarter turns), trapped access, door socket, disconnected service, insufficient cost, interrupted Engineer, invalid ghost cancellation, atomic cost/occupancy. |
 | Economy scenarios | Exact JSON bootstrap order; live population 12→100; water/food/power demand at 100/200; multiple Storage capacity; Aurite throughput to 300; storage saturation recovery; deliberate unrecoverable shortage to defeat. |
 | Arrivals/outcomes | One batch per action, final partial batch, no passenger replenishment, full spawn cells rollback, both victory orders, defeat precedence if last death and Beacon complete in one tick. |
 | UI/input | UI consumes world click; left/right/Escape build behavior; R rotation; resize/high-DPI conversion; camera controls in/past placement mode; reason shown for each rejected command. |
@@ -1354,12 +1454,15 @@ This supports extension without claiming that later mechanics are already implem
 |---|---|---|
 | Storage capacity | 100 total integer item units per completed Storage; capacity is shared across all six stored item types. Blueprint/storage mesh provides no capacity until complete. | P05, P08, E2/E3 |
 | Starting population/cargo | 12 surface colonists (4 Engineers, 6 Miners, 2 Farmers), needs 100, no buildings, 60 Steel, 20 Components, 20 Vegetables, passenger pool 188. These values live only in `scenario.json`. | P06–P09 |
-| Arrivals | One explicit Landing Pad action spawns up to 10 passengers; final partial batch allowed. Population cap is available exterior spawn cells and simulation stability, not an arbitrary hidden cap. | P09 |
+| Arrivals | One explicit Landing Pad action spawns up to 10 passengers on the pad's free access cells; final partial batch allowed. Population cap is available exterior spawn cells and simulation stability, not an arbitrary hidden cap. | P09 |
 | Power shortage | All-or-nothing consumer allocation for MVP; report deficit and stopped consumers. | P06, HUD |
 | Water | Continuous flow, no reservoir/item; use allocation order and costs specified in C7. | P06, HUD |
-| Grid | 64×64, 1 m cells, XZ world, 1 m cell centers; fixed interior rectangle/portal/deposits/spawn coordinates from C5. | P03, P07 |
-| Building placement | Integer-cell rectangular footprints with per-quarter-turn dimensions/access offsets in `buildings.json`; grid is collision authority. | P03, P07 |
-| Content source | `assets.json`, `buildings.json`, `colonists.json`, `materials.json`, `scenario.json`, `scene.json` are authoritative; no duplicated C++ constants. | P02–P07 |
+| Exit Door | A completed, enabled door gives passage; power plus base oxygen coverage only enable the suit refill. | P06, P07 |
+| Food and water points | Storage access cells (`eat`/`drink` services in `buildings.json`). | P06 |
+| Building data | `buildings.json` with all 13 definitions from P05; never a C++ table. | P05–P08 |
+| Grid | 64×64, 1 m cells, XZ world, 1 m cell centers; fixed interior rectangle, 2-cell west door socket, deposits and start cluster from C5, all in `scenario.json`. | P03, P07 |
+| Building placement | Integer-cell rectangular footprints `[w, h]` and access offsets at 0° in `buildings.json`, rotated by the shared quarter-turn transform of C5; mines must contain their deposit; grid is collision authority. | P05, P07 |
+| Content source | `assets.json`, `buildings.json`, `colonists.json`, `materials.json`, `scenario.json`, `scene.json` are authoritative (`scene.json` is generated from `scenario.json` by `tools/generate_arkfall_scene.py`); no duplicated C++ constants. | P02–P07 |
 | Scene parser | Complete and use `src/game/scene_parser.*` for static `scene.json`; `ScenarioLoader` handles simulation/map state. | P02, P03 |
 | Initial balance | C8 values are starting JSON values. Tune JSON only (not architecture) until bootstrap, 100-colonist, Aurite and defeat scenarios pass E3. | P05–P09 |
 | Art/animation | Rigid supplied placeholders through H4; polish at H5. | P02, P11 |
@@ -1367,6 +1470,6 @@ This supports extension without claiming that later mechanics are already implem
 
 These are decisions, not open questions. Tests may justify changing numeric JSON values; such changes must update this table and preserve the contracts above.
 
-**Verification gaps before implementation:** the current source has not been clean-built or run; selected assets have not been rendered through the loader; gameplay balance has not been simulated. P01, P02 and the H2–H4 validation gates resolve these risks. The current course submission requirements/date remain an external delivery check because they are not defined in the supplied GDD/MVP/framework.
+**Open verification gaps (24 Nov 2026):** Debug builds, the headless tests and the P02/P03 scenes have been verified. Release builds, gameplay balance (E3) and the course submission requirements/date have not; the H2–H4 gates and P11 resolve them, and the submission requirements remain an external delivery check.
 
 The first implementation gate is **one colonist reliably navigating through the Exit Door, reserving work, and interrupting it to survive**. No new phase may depend on undocumented default values: update the relevant JSON contract and acceptance scenario first.
