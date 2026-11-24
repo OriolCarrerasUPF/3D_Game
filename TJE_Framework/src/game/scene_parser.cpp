@@ -14,7 +14,7 @@ SceneLoadResult SceneParser::parse(const std::filesystem::path& path, const Asse
 	SceneLoadResult result;
 	DataLoadError error;
 	Json document;
-	if (!json_data::loadJsonFile(path, document, error) ||
+	if (!json_data::loadJson(path, document, error) ||
 		!json_data::validateKeys(document, {"schemaVersion", "instances"}, {}, path, "", error) ||
 		!json_data::checkSchemaVersion(document, 1, path, error))
 	{

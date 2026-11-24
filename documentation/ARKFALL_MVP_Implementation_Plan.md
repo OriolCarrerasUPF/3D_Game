@@ -730,7 +730,7 @@ TJE_Framework/
 │   ├── main.cpp                           [M: unified shutdown]
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
-│   │   ├── arkfall_types.h                 [N: records/enums/commands]
+│   │   ├── arkfall_types.h                 [N: records/enums/commands — started]
 │   │   ├── json_data.h / .cpp                [N: JSON validation/helpers — done]
 │   │   ├── world_transform.h / .cpp          [N: matrix/yaw conventions — done]
 │   │   ├── surface_height_map.h / .cpp       [N: visual floor height — done]
@@ -941,7 +941,7 @@ Use uniform asset scaling initially; this keeps the existing basic vertex shader
 
 **Already in place before P03 (24 Nov 2026):**
 
-- `data/arkfall/scenario.json` (schema 1) exists and is the source of truth for the grid (`64×64`, 1 m, origin `[-32,-32]`), the interior rectangle, `base.exitDoors[]` (id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell — deposit cells block), `staticBlockers[]` (id, inclusive `min`/`max` cell rectangle), `initialColonists[]` (id, job, cell, needs) and the temporary `debugRoute` (colonist id, `loop`, labelled stop cells). P03 writes the strict C++ `ScenarioLoader` for exactly this schema using `json_data` (`readIntPair`, `readInteger`, `readFloatInRange`, `validateKeys`, `checkSchemaVersion`).
+- `data/arkfall/scenario.json` (schema 1) exists and is the source of truth for the grid (`64×64`, 1 m, origin `[-32,-32]`), the interior rectangle, `base.exitDoors[]` (id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell — deposit cells block), `staticBlockers[]` (id, inclusive `min`/`max` cell rectangle), `initialColonists[]` (id, job, cell, needs) and the temporary `debugRoute` (colonist id, `loop`, labelled stop cells). P03 writes the strict C++ `ScenarioLoader` for exactly this schema using `json_data` (`readCell`, `readInt`, `readEnum`, `readFloatInRange`, `requireArray`, `validateKeys`, `checkSchemaVersion`) and the shared types in `arkfall_types.h` (`Cell`, `Zone`, `DoorPortal`, `DepositDefinition`, `ColonistState`, `Route`).
 - Scripted route stops: iron mine access `(9,12)` (east of the iron deposit `(8,12)`), door crossing `(23,31)→(24,31)`, Storage access `(32,33)` (west of the 2×2 `storage_preview` footprint `(33..34, 32..33)`). The colonist starts at `(18,31)`.
 - Static blockers are only the two deposits and the two placeholder machines; their scene instances are centred on their footprints. `tools/generate_arkfall_scene.py` regenerates `scene.json` from `scenario.json` + `assets.json`, re-checks these rules and runs a BFS over the debug route; `--check` fails if the files diverge.
 - `scene.json` contains no colonist. Spawn colonists with `ColonyWorld::createDynamicView(assetId, materialId)` after adding the colonist asset to the set passed to `AssetCatalog::loadReferencedAssets()`; move them every frame with `setDynamicViewPose(id, gameplayPosition, yaw)` and remove them with `destroyDynamicView(id)`. Views sharing asset/material are drawn as one instanced group. `setDynamicViewPose` adds the visual floor height (0.1 m indoors) from `walkableSurface` assets; gameplay stays at y = 0.

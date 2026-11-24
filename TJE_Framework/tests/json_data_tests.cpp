@@ -31,7 +31,7 @@ TEST_CASE("json_data: missing file is an error")
 {
 	Json value;
 	DataLoadError error;
-	CHECK(!json_data::loadJsonFile("data/arkfall/does_not_exist.json", value, error));
+	CHECK(!json_data::loadJson("data/arkfall/does_not_exist.json", value, error));
 	CHECK(error.message == "could not open JSON file");
 }
 
@@ -85,12 +85,12 @@ TEST_CASE("json_data: scalar readers validate type and range")
 	CHECK(!json_data::readFloatInRange(Json(100.5), 0.0f, 100.0f, number, "f", "/n", error));
 
 	int integer = 0;
-	CHECK(json_data::readInteger(Json(63), 0, 63, integer, "f", "/i", error));
+	CHECK(json_data::readInt(Json(63), integer, 0, 63, "f", "/i", error));
 	CHECK_EQ(integer, 63);
-	CHECK(!json_data::readInteger(Json(64), 0, 63, integer, "f", "/i", error));
-	CHECK(!json_data::readInteger(Json(-1), 0, 63, integer, "f", "/i", error));
-	CHECK(!json_data::readInteger(Json(1.0), 0, 63, integer, "f", "/i", error));
-	CHECK(!json_data::readInteger(Json(18446744073709551615ull), 0, 63, integer, "f", "/i", error));
+	CHECK(!json_data::readInt(Json(64), integer, 0, 63, "f", "/i", error));
+	CHECK(!json_data::readInt(Json(-1), integer, 0, 63, "f", "/i", error));
+	CHECK(!json_data::readInt(Json(1.0), integer, 0, 63, "f", "/i", error));
+	CHECK(!json_data::readInt(Json(18446744073709551615ull), integer, 0, 63, "f", "/i", error));
 }
 
 TEST_CASE("json_data: vector readers require exact lengths")
@@ -112,12 +112,13 @@ TEST_CASE("json_data: vector readers require exact lengths")
 	CHECK(!json_data::readColor4(parse("[0, 0.5, 1.2, 1]"), color, "f", "/c", error));
 	CHECK_EQ(error.json_pointer, std::string("/c/2"));
 
-	json_data::IntPair cell;
-	CHECK(json_data::readIntPair(parse("[23, 31]"), 0, 63, cell, "f", "/cell", error));
+	Cell cell;
+	CHECK(json_data::readCell(parse("[23, 31]"), cell, 64, 64, "f", "/cell", error));
 	CHECK_EQ(cell.x, 23); CHECK_EQ(cell.z, 31);
-	CHECK(!json_data::readIntPair(parse("[23, 64]"), 0, 63, cell, "f", "/cell", error));
+	CHECK(!json_data::readCell(parse("[23, 64]"), cell, 64, 64, "f", "/cell", error));
 	CHECK_EQ(error.json_pointer, std::string("/cell/1"));
-	CHECK(!json_data::readIntPair(parse("[23]"), 0, 63, cell, "f", "/cell", error));
+	CHECK(!json_data::readCell(parse("[23]"), cell, 64, 64, "f", "/cell", error));
+	CHECK(!json_data::readCell(parse("[-1, 0]"), cell, 64, 64, "f", "/cell", error));
 }
 
 TEST_CASE("json_data: data paths cannot escape the data directory")
@@ -133,6 +134,21 @@ TEST_CASE("json_data: data paths cannot escape the data directory")
 	CHECK(!json_data::resolveDataPath(base, data_root, Json("models/missing.obj"), resolved, "assets.json", "/p", error));
 	CHECK(!json_data::resolveDataPath(base, data_root, Json(""), resolved, "assets.json", "/p", error));
 	CHECK(!json_data::resolveDataPath(base, data_root, Json((data_root / "arkfall" / "assets.json").string()), resolved, "assets.json", "/p", error));
+}
+
+TEST_CASE("json_data: arrays and enums")
+{
+	DataLoadError error;
+	CHECK(json_data::requireArray(parse("[1]"), 1, "f", "/a", error));
+	CHECK(!json_data::requireArray(parse("[]"), 1, "f", "/a", error));
+	CHECK(!json_data::requireArray(parse("{}"), 0, "f", "/a", error));
+
+	const std::map<std::string, DepositType> names{ { "iron", DepositType::Iron }, { "copper", DepositType::Copper } };
+	DepositType type = DepositType::Iron;
+	CHECK(json_data::readEnum(Json("copper"), names, type, "f", "/resource", error));
+	CHECK(type == DepositType::Copper);
+	CHECK(!json_data::readEnum(Json("gold"), names, type, "f", "/resource", error));
+	CHECK(error.message.find("expected one of: copper, iron") != std::string::npos);
 }
 
 TEST_CASE("json_data: uniform scale check")

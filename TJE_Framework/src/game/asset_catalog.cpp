@@ -58,10 +58,10 @@ namespace
 		std::map<std::string, SemanticMaterial>& materials, DataLoadError& error)
 	{
 		Json document;
-		if (!json_data::loadJsonFile(materials_file, document, error) ||
+		if (!json_data::loadJson(materials_file, document, error) ||
 			!json_data::validateKeys(document, {"schemaVersion", "materials"}, {}, materials_file, "", error) ||
 			!json_data::checkSchemaVersion(document, 1, materials_file, error) ||
-			!json_data::readNonEmptyArray(document["materials"], materials_file, "/materials", error))
+			!json_data::requireArray(document["materials"], 1, materials_file, "/materials", error))
 			return false;
 
 		for (std::size_t i = 0; i < document["materials"].size(); ++i)
@@ -106,7 +106,7 @@ AssetCatalogLoadResult AssetCatalog::load(const std::filesystem::path& assets_fi
 	}
 
 	Json document;
-	if (!json_data::loadJsonFile(assets_file, document, error) ||
+	if (!json_data::loadJson(assets_file, document, error) ||
 		!json_data::validateKeys(document, {"schemaVersion", "shaders", "assets"}, {}, assets_file, "", error) ||
 		!json_data::checkSchemaVersion(document, 1, assets_file, error))
 	{
@@ -120,7 +120,7 @@ AssetCatalogLoadResult AssetCatalog::load(const std::filesystem::path& assets_fi
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["standardVertex"], standard_vertex_path, assets_file, "/shaders/standardVertex", error) ||
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["instancedVertex"], instanced_vertex_path, assets_file, "/shaders/instancedVertex", error) ||
 		!json_data::resolveDataPath(arkfall_root, data_root, shader_document["fragment"], fragment_path, assets_file, "/shaders/fragment", error) ||
-		!json_data::readNonEmptyArray(document["assets"], assets_file, "/assets", error))
+		!json_data::requireArray(document["assets"], 1, assets_file, "/assets", error))
 	{
 		materials.clear();
 		result.error = error;

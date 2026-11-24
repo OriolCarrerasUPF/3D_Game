@@ -17,7 +17,7 @@
 namespace
 {
 	using json_data::Json;
-	using Cell = std::pair<int, int>;
+	using GridKey = std::pair<int, int>;
 
 	struct ShippedData
 	{
@@ -47,7 +47,7 @@ namespace
 				return data;
 			}
 			DataLoadError error;
-			if (!json_data::loadJsonFile("data/arkfall/scenario.json", data.scenario, error))
+			if (!json_data::loadJson("data/arkfall/scenario.json", data.scenario, error))
 			{
 				test::fail(__FILE__, __LINE__, "scenario: " + error.describe());
 				return data;
@@ -57,7 +57,7 @@ namespace
 		return data;
 	}
 
-	Cell worldToCell(const Json& scenario, float x, float z)
+	GridKey worldToCell(const Json& scenario, float x, float z)
 	{
 		const float origin_x = scenario["grid"]["originXZ"][0].get<float>();
 		const float origin_z = scenario["grid"]["originXZ"][1].get<float>();
@@ -104,7 +104,7 @@ TEST_CASE("shipped data: every scene blocker matches a scenario blocker")
 	if (!data.ok)
 		return;
 	const Json& scenario = data.scenario;
-	std::map<Cell, std::string> blocked;
+	std::map<GridKey, std::string> blocked;
 	for (const Json& deposit : scenario["deposits"])
 		blocked[{ deposit["cell"][0].get<int>(), deposit["cell"][1].get<int>() }] = deposit["id"].get<std::string>();
 	for (const Json& blocker : scenario["staticBlockers"])
@@ -117,7 +117,7 @@ TEST_CASE("shipped data: every scene blocker matches a scenario blocker")
 	{
 		if (!instance.blocks_navigation)
 			continue;
-		const Cell cell = worldToCell(scenario, instance.position.x, instance.position.z);
+		const GridKey cell = worldToCell(scenario, instance.position.x, instance.position.z);
 		const auto it = blocked.find(cell);
 		CHECK(it != blocked.end());
 		if (it != blocked.end())
@@ -156,8 +156,8 @@ TEST_CASE("shipped data: exit gate width matches its door crossings")
 		// No wall piece may remain on a crossing edge (the gap is as wide as the door).
 		for (const Json& crossing : door["crossings"])
 		{
-			const Cell inside{ crossing["inside"][0].get<int>(), crossing["inside"][1].get<int>() };
-			const Cell outside{ crossing["outside"][0].get<int>(), crossing["outside"][1].get<int>() };
+			const GridKey inside{ crossing["inside"][0].get<int>(), crossing["inside"][1].get<int>() };
+			const GridKey outside{ crossing["outside"][0].get<int>(), crossing["outside"][1].get<int>() };
 			// Wall rotation that puts the slab on the inside cell's edge toward `outside`
 			// (same convention as tools/generate_arkfall_scene.py).
 			float edge_rotation = 0.0f;                                   // west
@@ -168,7 +168,7 @@ TEST_CASE("shipped data: exit gate width matches its door crossings")
 			{
 				if (instance.asset_id != "base_boundary")
 					continue;
-				const Cell wall_cell = worldToCell(data.scenario, instance.position.x, instance.position.z);
+				const GridKey wall_cell = worldToCell(data.scenario, instance.position.x, instance.position.z);
 				const bool on_crossing_edge = wall_cell == inside &&
 					std::fabs(instance.rotation_y_degrees - edge_rotation) < 0.01f;
 				CHECK(!on_crossing_edge);

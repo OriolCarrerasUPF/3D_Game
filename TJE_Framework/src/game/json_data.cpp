@@ -6,7 +6,10 @@
 
 namespace json_data
 {
-	DataLoadError makeError(const std::filesystem::path& file, const std::string& pointer, const std::string& message)
+	// ---- Errors, pointers and files ---------------------------------------
+
+	DataLoadError makeError(const std::filesystem::path& file, const std::string& pointer,
+		const std::string& message)
 	{
 		return DataLoadError{ file, pointer, message };
 	}
@@ -21,21 +24,7 @@ namespace json_data
 		return pointer + "/" + std::to_string(index);
 	}
 
-	bool parseJsonText(const std::string& text, const std::filesystem::path& file, Json& result, DataLoadError& error)
-	{
-		try
-		{
-			result = Json::parse(text);
-		}
-		catch (const Json::parse_error& exception)
-		{
-			error = makeError(file, "", std::string("invalid JSON at byte ") + std::to_string(exception.byte) + ": " + exception.what());
-			return false;
-		}
-		return true;
-	}
-
-	bool loadJsonFile(const std::filesystem::path& path, Json& result, DataLoadError& error)
+	bool loadJson(const std::filesystem::path& path, Json& result, DataLoadError& error)
 	{
 		std::ifstream input(path, std::ios::binary);
 		if (!input)
@@ -49,11 +38,48 @@ namespace json_data
 		}
 		catch (const Json::parse_error& exception)
 		{
-			error = makeError(path, "", std::string("invalid JSON at byte ") + std::to_string(exception.byte) + ": " + exception.what());
+			error = makeError(path, "", std::string("invalid JSON at byte ") +
+				std::to_string(exception.byte) + ": " + exception.what());
 			return false;
 		}
 		return true;
 	}
+
+	bool parseJsonText(const std::string& text, const std::filesystem::path& file, Json& result,
+		DataLoadError& error)
+	{
+		try
+		{
+			result = Json::parse(text);
+		}
+		catch (const Json::parse_error& exception)
+		{
+			error = makeError(file, "", std::string("invalid JSON at byte ") +
+				std::to_string(exception.byte) + ": " + exception.what());
+			return false;
+		}
+		return true;
+	}
+
+	bool checkSchemaVersion(const Json& document, int supported_version,
+		const std::filesystem::path& file, DataLoadError& error)
+	{
+		if (!document.is_object() || !document.contains("schemaVersion"))
+		{
+			error = makeError(file, "/schemaVersion", "required field is missing");
+			return false;
+		}
+		const Json& version = document["schemaVersion"];
+		if (!version.is_number_integer() || version.get<long long>() != supported_version)
+		{
+			error = makeError(file, "/schemaVersion",
+				"expected supported schema version " + std::to_string(supported_version));
+			return false;
+		}
+		return true;
+	}
+
+	// ---- Objects ----------------------------------------------------------
 
 	bool validateKeys(const Json& value, const std::set<std::string>& required,
 		const std::set<std::string>& optional, const std::filesystem::path& file,
@@ -83,22 +109,7 @@ namespace json_data
 		return true;
 	}
 
-	bool checkSchemaVersion(const Json& document, int expected_version,
-		const std::filesystem::path& file, DataLoadError& error)
-	{
-		if (!document.is_object() || !document.contains("schemaVersion"))
-		{
-			error = makeError(file, "/schemaVersion", "required field is missing");
-			return false;
-		}
-		const Json& version = document["schemaVersion"];
-		if (!version.is_number_integer() || version.get<long long>() != expected_version)
-		{
-			error = makeError(file, "/schemaVersion", "expected supported schema version " + std::to_string(expected_version));
-			return false;
-		}
-		return true;
-	}
+	// ---- Scalars ----------------------------------------------------------
 
 	bool readString(const Json& value, std::string& output, const std::filesystem::path& file,
 		const std::string& pointer, DataLoadError& error)
@@ -150,14 +161,15 @@ namespace json_data
 			return false;
 		if (number < min_value || number > max_value)
 		{
-			error = makeError(file, pointer, "number must be in [" + std::to_string(min_value) + ", " + std::to_string(max_value) + "]");
+			error = makeError(file, pointer, "number must be in [" + std::to_string(min_value) + ", " +
+				std::to_string(max_value) + "]");
 			return false;
 		}
 		output = number;
 		return true;
 	}
 
-	bool readInteger(const Json& value, int min_value, int max_value, int& output,
+	bool readInt(const Json& value, int& output, int min_value, int max_value,
 		const std::filesystem::path& file, const std::string& pointer, DataLoadError& error)
 	{
 		if (!value.is_number_integer())
@@ -165,8 +177,9 @@ namespace json_data
 			error = makeError(file, pointer, "expected an integer");
 			return false;
 		}
-		// Unsigned values above INT64_MAX would wrap; reject them before converting.
-		if (value.is_number_unsigned() && value.get<unsigned long long>() > static_cast<unsigned long long>(std::numeric_limits<long long>::max()))
+		// Unsigned values above INT64_MAX would wrap when read as long long.
+		if (value.is_number_unsigned() &&
+			value.get<unsigned long long>() > static_cast<unsigned long long>(std::numeric_limits<long long>::max()))
 		{
 			error = makeError(file, pointer, "integer is out of range");
 			return false;
@@ -174,26 +187,29 @@ namespace json_data
 		const long long number = value.get<long long>();
 		if (number < min_value || number > max_value)
 		{
-			error = makeError(file, pointer, "integer must be in [" + std::to_string(min_value) + ", " + std::to_string(max_value) + "]");
+			error = makeError(file, pointer, "integer " + std::to_string(number) + " is outside [" +
+				std::to_string(min_value) + ", " + std::to_string(max_value) + "]");
 			return false;
 		}
 		output = static_cast<int>(number);
 		return true;
 	}
 
-	bool readIntPair(const Json& value, int min_value, int max_value, IntPair& output,
-		const std::filesystem::path& file, const std::string& pointer, DataLoadError& error)
+	// ---- Arrays and compound values --------------------------------------
+
+	bool requireArray(const Json& value, std::size_t min_size, const std::filesystem::path& file,
+		const std::string& pointer, DataLoadError& error)
 	{
-		if (!value.is_array() || value.size() != 2)
+		if (!value.is_array())
 		{
-			error = makeError(file, pointer, "expected an array of exactly two integers");
+			error = makeError(file, pointer, "expected an array");
 			return false;
 		}
-		IntPair pair;
-		if (!readInteger(value[0], min_value, max_value, pair.x, file, childPointer(pointer, std::size_t(0)), error) ||
-			!readInteger(value[1], min_value, max_value, pair.z, file, childPointer(pointer, std::size_t(1)), error))
+		if (value.size() < min_size)
+		{
+			error = makeError(file, pointer, "expected at least " + std::to_string(min_size) + " element(s)");
 			return false;
-		output = pair;
+		}
 		return true;
 	}
 
@@ -255,16 +271,23 @@ namespace json_data
 		return true;
 	}
 
-	bool readNonEmptyArray(const Json& value, const std::filesystem::path& file,
-		const std::string& pointer, DataLoadError& error)
+	bool readCell(const Json& value, Cell& output, int grid_width, int grid_height,
+		const std::filesystem::path& file, const std::string& pointer, DataLoadError& error)
 	{
-		if (!value.is_array() || value.empty())
+		if (!value.is_array() || value.size() != 2)
 		{
-			error = makeError(file, pointer, "expected a non-empty array");
+			error = makeError(file, pointer, "expected a cell [x, z]");
 			return false;
 		}
+		Cell cell;
+		if (!readInt(value[0], cell.x, 0, grid_width - 1, file, childPointer(pointer, std::size_t(0)), error) ||
+			!readInt(value[1], cell.z, 0, grid_height - 1, file, childPointer(pointer, std::size_t(1)), error))
+			return false;
+		output = cell;
 		return true;
 	}
+
+	// ---- Paths and transforms ---------------------------------------------
 
 	bool isWithin(const std::filesystem::path& child, const std::filesystem::path& root)
 	{
