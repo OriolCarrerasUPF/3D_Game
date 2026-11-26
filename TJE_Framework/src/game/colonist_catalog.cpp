@@ -3,6 +3,8 @@
 #include "asset_catalog.h"
 #include "json_data.h"
 
+#include <set>
+
 ColonistCatalogLoadResult ColonistCatalog::load(const std::filesystem::path& path)
 {
 	using json_data::Json;
@@ -11,12 +13,13 @@ ColonistCatalogLoadResult ColonistCatalog::load(const std::filesystem::path& pat
 	static const std::map<std::string, Job> job_names{ { "engineer", Job::Engineer }, { "miner", Job::Miner }, { "farmer", Job::Farmer } };
 
 	roles.clear();
+	names.clear();
 	source_path = path;
 	ColonistCatalogLoadResult result;
 	DataLoadError error;
 	Json document;
 	if (!json_data::loadJson(path, document, error) ||
-		!json_data::validateKeys(document, {"schemaVersion", "roles"}, {}, path, "", error) ||
+		!json_data::validateKeys(document, {"schemaVersion", "roles", "names"}, {}, path, "", error) ||
 		!json_data::checkSchemaVersion(document, 1, path, error) ||
 		!json_data::requireArray(document["roles"], 1, path, "/roles", error))
 	{
@@ -53,7 +56,33 @@ ColonistCatalogLoadResult ColonistCatalog::load(const std::filesystem::path& pat
 			return result;
 		}
 	}
+
+	// Name pool: unique, non-empty. Whether it is large enough depends on the scenario
+	// (initial colonists, later + arkPassengers), so ColonySimulation checks the count.
+	std::vector<std::string> parsed_names;
+	std::set<std::string> seen;
+	if (!json_data::requireArray(document["names"], 1, path, "/names", error))
+	{
+		result.error = error;
+		return result;
+	}
+	for (std::size_t i = 0; i < document["names"].size(); ++i)
+	{
+		std::string name;
+		if (!json_data::readString(document["names"][i], name, path, childPointer("/names", i), error))
+		{
+			result.error = error;
+			return result;
+		}
+		if (!seen.insert(name).second)
+		{
+			result.error = json_data::makeError(path, childPointer("/names", i), "duplicate name '" + name + "'");
+			return result;
+		}
+		parsed_names.push_back(name);
+	}
 	roles.swap(parsed);
+	names.swap(parsed_names);
 	return result;
 }
 

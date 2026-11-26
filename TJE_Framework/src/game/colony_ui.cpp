@@ -7,8 +7,9 @@ namespace
 	constexpr float button_height = 24.0f;
 	constexpr float button_gap = 6.0f;
 	constexpr float bar_padding = 8.0f;
-	constexpr float popup_width = 290.0f;
-	constexpr float popup_height = 236.0f;
+	constexpr float popup_width = 300.0f;
+	constexpr float popup_height = 290.0f;
+	constexpr float job_button_height = 24.0f;
 	constexpr float popup_margin = 10.0f;
 	constexpr float close_size = 22.0f;
 	constexpr float build_panel_width = 560.0f;
@@ -39,6 +40,7 @@ void ColonyUI::layout(float new_width, float new_height)
 	height = std::max(new_height, 1.0f);
 
 	top_bar = UiRect{ 0.0f, 0.0f, width, top_bar_height };
+	resource_bar = UiRect{ 0.0f, top_bar_height, width, resource_bar_height };
 	help_bar = UiRect{ 0.0f, height - help_bar_height, width, help_bar_height };
 
 	// Top-bar buttons, right aligned: [Pause][-][+]  [Build]  [Debug F3]
@@ -55,9 +57,19 @@ void ColonyUI::layout(float new_width, float new_height)
 	}
 
 	const float popup_w = std::min(popup_width, width - 2.0f * popup_margin);
-	popup = UiRect{ width - popup_w - popup_margin, top_bar_height + popup_margin, popup_w, popup_height };
+	const float popup_top = top_bar_height + resource_bar_height + popup_margin;
+	const float popup_h = std::max(std::min(popup_height, height - help_bar_height - popup_top - popup_margin), 120.0f);
+	popup = UiRect{ width - popup_w - popup_margin, popup_top, popup_w, popup_h };
 	buttons[static_cast<int>(UiButton::ClosePopup)] =
 		UiRect{ popup.x + popup.w - close_size - 6.0f, popup.y + 6.0f, close_size, close_size };
+
+	// Role buttons along the bottom of the colonist popup: [Engineer][Miner][Farmer].
+	const float job_gap = 6.0f;
+	const float job_w = (popup.w - 24.0f - 2.0f * job_gap) / 3.0f;
+	const float job_y = popup.y + popup.h - job_button_height - 10.0f;
+	const UiButton jobs[] = { UiButton::JobEngineer, UiButton::JobMiner, UiButton::JobFarmer };
+	for (int i = 0; i < 3; ++i)
+		buttons[static_cast<int>(jobs[i])] = UiRect{ popup.x + 12.0f + i * (job_w + job_gap), job_y, job_w, job_button_height };
 
 	const float panel_w = std::min(build_panel_width, width - 20.0f);
 	build_panel = UiRect{ (width - panel_w) * 0.5f, height - help_bar_height - build_panel_height - 8.0f, panel_w, build_panel_height };
@@ -76,6 +88,8 @@ bool ColonyUI::isButtonVisible(UiButton button) const
 {
 	if (button == UiButton::ClosePopup)
 		return isPopupVisible();
+	if (button == UiButton::JobEngineer || button == UiButton::JobMiner || button == UiButton::JobFarmer)
+		return selected_colonist != INVALID_COLONIST;
 	return static_cast<int>(button) < static_cast<int>(UiButton::Count);
 }
 
@@ -92,7 +106,7 @@ UiButton ColonyUI::buttonAt(float x, float y) const
 
 bool ColonyUI::isPointerOverUi(float x, float y) const
 {
-	return top_bar.contains(x, y) || help_bar.contains(x, y) ||
+	return top_bar.contains(x, y) || resource_bar.contains(x, y) || help_bar.contains(x, y) ||
 		(isPopupVisible() && popup.contains(x, y)) ||
 		(build_mode && build_panel.contains(x, y));
 }
@@ -182,7 +196,7 @@ ColonyUI::CancelResult ColonyUI::cancel()
 		setBuildMode(false);
 		return CancelResult::BuildMode;
 	}
-	if (selected_colonist != INVALID_COLONIST)
+	if (isPopupVisible())
 	{
 		clearSelection();
 		return CancelResult::Selection;
@@ -212,6 +226,9 @@ const char* ColonyUI::buttonLabel(UiButton button)
 	case UiButton::Build: return "Build (B)";
 	case UiButton::Overlay: return "Debug (F3)";
 	case UiButton::ClosePopup: return "x";
+	case UiButton::JobEngineer: return "Engineer";
+	case UiButton::JobMiner: return "Miner";
+	case UiButton::JobFarmer: return "Farmer";
 	default: return "";
 	}
 }
@@ -226,7 +243,32 @@ UiAction ColonyUI::actionFor(UiButton button)
 	case UiButton::Build: return UiAction::ToggleBuildMode;
 	case UiButton::Overlay: return UiAction::ToggleOverlay;
 	case UiButton::ClosePopup: return UiAction::CloseSelection;
+	case UiButton::JobEngineer: return UiAction::AssignEngineer;
+	case UiButton::JobMiner: return UiAction::AssignMiner;
+	case UiButton::JobFarmer: return UiAction::AssignFarmer;
 	default: return UiAction::None;
+	}
+}
+
+UiButton ColonyUI::jobButton(Job job)
+{
+	switch (job)
+	{
+	case Job::Engineer: return UiButton::JobEngineer;
+	case Job::Miner: return UiButton::JobMiner;
+	case Job::Farmer: return UiButton::JobFarmer;
+	}
+	return UiButton::None;
+}
+
+bool ColonyUI::jobForAction(UiAction action, Job& out_job)
+{
+	switch (action)
+	{
+	case UiAction::AssignEngineer: out_job = Job::Engineer; return true;
+	case UiAction::AssignMiner: out_job = Job::Miner; return true;
+	case UiAction::AssignFarmer: out_job = Job::Farmer; return true;
+	default: return false;
 	}
 }
 
@@ -262,7 +304,7 @@ const std::vector<std::string>& ColonyUI::requiredMaterialIds()
 		"ui_panel", "ui_button", "ui_button_hover", "ui_button_active", "ui_bar_back",
 		"ui_need_hunger", "ui_need_thirst", "ui_need_oxygen",
 		// World markers drawn by ColonyWorld
-		"ui_selection", "ui_ghost_valid", "ui_ghost_invalid",
+		"ui_selection", "ui_ghost_valid", "ui_ghost_invalid", "ui_progress", "ui_access",
 		"debug_blocked", "debug_door_open", "debug_door_closed", "debug_path" };
 	return ids;
 }

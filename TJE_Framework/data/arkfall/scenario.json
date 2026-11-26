@@ -23,10 +23,7 @@
     { "id": "iron_deposit", "resource": "iron", "cell": [8, 12] },
     { "id": "copper_deposit", "resource": "copper", "cell": [55, 12] }
   ],
-  "staticBlockers": [
-    { "id": "oxygenator_preview", "min": [29, 31], "max": [30, 32] },
-    { "id": "storage_preview", "min": [33, 32], "max": [34, 33] }
-  ],
+  "staticBlockers": [],
   "initialColonists": [
     {
       "id": 1,
@@ -35,6 +32,9 @@
       "needs": { "hunger": 100, "thirst": 100, "oxygen": 100 }
     }
   ],
+  "initialInventory": { "steel": 60, "components": 20, "vegetables": 20 },
+  "cargoCapacity": 100,
+  "initialBuildings": [],
   "debugRoute": {
     "colonistId": 1,
     "loop": true,

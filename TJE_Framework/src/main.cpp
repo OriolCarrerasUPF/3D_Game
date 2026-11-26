@@ -19,6 +19,7 @@
 #include <iostream> //to output
 #include <exception>
 #include <cstdlib>
+#include <string>
 
 // *********************************
 //create a window using SDL
@@ -209,6 +210,18 @@ int main(int argc, char** argv)
 {
 	std::cout << "Initiating game..." << std::endl;
 
+	// Command line (P05): --scenario <path> selects the start scenario, e.g.
+	//   TJE_Framework.exe --scenario data/arkfall/dev/production.json
+	std::string scenario_path = Game::default_scenario_path;
+	for (int i = 1; i < argc; ++i)
+	{
+		const std::string argument = argv[i];
+		if (argument == "--scenario" && i + 1 < argc)
+			scenario_path = argv[++i];
+		else // IDEs (e.g. Xcode) may add their own arguments: warn, do not abort.
+			std::cerr << "Ignoring argument '" << argument << "'. Usage: TJE_Framework [--scenario <path>]" << std::endl;
+	}
+
 	// Prepare SDL and keep the window/context under one owner: main().
 	if (SDL_Init(SDL_INIT_EVERYTHING) != 0)
 	{
@@ -240,7 +253,7 @@ int main(int argc, char** argv)
 	try
 	{
 		// The Game (and its GL-dependent resources) leaves scope before context teardown.
-		Game game(window_width, window_height, window);
+		Game game(window_width, window_height, window, scenario_path);
 		mainLoop(game);
 	}
 	catch (const std::exception& error)

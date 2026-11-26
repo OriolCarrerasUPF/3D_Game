@@ -148,3 +148,53 @@ TEST_CASE("ui: messages expire on real time")
 	CHECK_EQ(std::string(ColonyUI::jobName(Job::Miner)), std::string("Miner"));
 	CHECK_EQ(std::string(ColonyUI::stateName(ColonistState::MovingToWork)), std::string("Walking"));
 }
+
+TEST_CASE("ui: role buttons exist only in the colonist popup and order a role")
+{
+	ColonyUI ui;
+	ui.layout(800.0f, 600.0f);
+	for (UiButton button : { UiButton::JobEngineer, UiButton::JobMiner, UiButton::JobFarmer })
+		CHECK(!ui.isButtonVisible(button));
+	ui.select(3);
+	const UiRect& popup = ui.getPopupRect();
+	for (UiButton button : { UiButton::JobEngineer, UiButton::JobMiner, UiButton::JobFarmer })
+	{
+		CHECK(ui.isButtonVisible(button));
+		const UiRect& r = ui.getButtonRect(button);
+		CHECK(r.x >= popup.x && r.x + r.w <= popup.x + popup.w);
+		CHECK(r.y >= popup.y && r.y + r.h <= popup.y + popup.h);
+	}
+	const UiRect& miner = ui.getButtonRect(UiButton::JobMiner);
+	press(ui, PointerType::Down, centerX(miner), centerY(miner));
+	const UiPointerResult up = press(ui, PointerType::Up, centerX(miner), centerY(miner));
+	CHECK(up.consumed);
+	CHECK(up.action == UiAction::AssignMiner);
+	Job job = Job::Engineer;
+	CHECK(ColonyUI::jobForAction(up.action, job));
+	CHECK(job == Job::Miner);
+	CHECK(!ColonyUI::jobForAction(UiAction::TogglePause, job));
+	CHECK(ColonyUI::jobButton(Job::Farmer) == UiButton::JobFarmer);
+	CHECK_EQ(ui.getSelectedColonist(), 3u); // ordering a role keeps the selection
+}
+
+TEST_CASE("ui: building selection uses the popup without role buttons")
+{
+	ColonyUI ui;
+	ui.layout(800.0f, 600.0f);
+	ui.select(2);
+	ui.selectBuilding(7);
+	CHECK_EQ(ui.getSelectedBuilding(), 7u);
+	CHECK_EQ(ui.getSelectedColonist(), INVALID_COLONIST); // never both
+	CHECK(ui.isPopupVisible());
+	CHECK(ui.isButtonVisible(UiButton::ClosePopup));
+	CHECK(!ui.isButtonVisible(UiButton::JobMiner));
+	CHECK(ui.cancel() == ColonyUI::CancelResult::Selection);
+	CHECK_EQ(ui.getSelectedBuilding(), INVALID_BUILDING);
+	CHECK(!ui.isPopupVisible());
+
+	// The resource bar under the top bar is UI too.
+	const UiRect& bar = ui.getResourceBar();
+	CHECK_NEAR(bar.y, ColonyUI::top_bar_height, 1e-4);
+	CHECK(ui.isPointerOverUi(300.0f, bar.y + bar.h * 0.5f));
+	CHECK(ui.getPopupRect().y >= bar.y + bar.h);
+}

@@ -4,6 +4,7 @@
 // Standard C++ only: no OpenGL, SDL or framework includes, so the simulation
 // and tests can use it without a window.
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <string>
@@ -68,6 +69,73 @@ struct DepositDefinition
 };
 
 // ---------------------------------------------------------------------------
+// Stored items (plan C2/C7). Six integer item types share one capacity; water,
+// power and oxygen are flows/capacities, never items. JSON keys: ironOre,
+// copperOre, steel, components, vegetables, aurite.
+// ---------------------------------------------------------------------------
+
+enum class ResourceType : std::uint8_t
+{
+	IronOre,
+	CopperOre,
+	Steel,
+	Components,
+	Vegetables,
+	Aurite
+};
+
+constexpr std::size_t resource_type_count = 6;
+
+// Integer amount per item type (costs, recipe inputs/outputs, inventory contents).
+struct ResourceAmounts
+{
+	std::array<int, resource_type_count> values{};
+
+	int& operator[](ResourceType type) { return values[static_cast<std::size_t>(type)]; }
+	int operator[](ResourceType type) const { return values[static_cast<std::size_t>(type)]; }
+	int total() const
+	{
+		int sum = 0;
+		for (int value : values)
+			sum += value;
+		return sum;
+	}
+	bool empty() const { return total() == 0; }
+	bool operator==(const ResourceAmounts& other) const { return values == other.values; }
+	bool operator!=(const ResourceAmounts& other) const { return values != other.values; }
+};
+
+// ---------------------------------------------------------------------------
+// Buildings (plan C2/C8). The enum only names the 13 MVP types; every value
+// (footprint, cost, slots, recipe, visuals ...) comes from buildings.json.
+// ---------------------------------------------------------------------------
+
+enum class BuildingType : std::uint8_t
+{
+	ExitDoor,
+	Storage,
+	Oxygenator,
+	Greenhouse,
+	IronProcessor,
+	CopperProcessor,
+	AuriteProcessor,
+	IronMine,
+	CopperMine,
+	WaterExtractor,
+	SolarPanel,
+	LandingPad,
+	HavenBeacon
+};
+
+constexpr std::size_t building_type_count = 13;
+
+enum class ConstructionState : std::uint8_t
+{
+	Blueprint,   // P07: paid and placed, waiting for an Engineer
+	Complete
+};
+
+// ---------------------------------------------------------------------------
 // Colonists
 // ---------------------------------------------------------------------------
 
@@ -79,8 +147,8 @@ enum class Job : std::uint8_t
 	Farmer
 };
 
-// Full state list from plan C6.1. P03 only uses Idle and MovingToWork;
-// the rest are filled in from P05/P06, so this enum does not have to change later.
+// Full state list from plan C6.1. P05 uses Idle, MovingToWork and Working; the
+// service states arrive with needs in P06, so this enum does not have to change later.
 enum class ColonistState : std::uint8_t
 {
 	Idle,
@@ -106,8 +174,9 @@ struct Route
 // Player commands (plan C2/C4/C6.1)
 // The UI and input never change the simulation directly: they queue a GameCommand
 // and ColonySimulation::apply() returns a CommandResult. Commands are applied once
-// per frame, FIFO, before that frame's ticks (also while paused). Later steps add
-// AssignJob (P05), PlaceBuilding (P07), CallRocket (P09) and Restart (P10).
+// per frame, FIFO, before that frame's ticks (also while paused). AssignJob is the
+// P05 role order from the colonist popup; later steps add PlaceBuilding (P07),
+// CallRocket (P09) and Restart (P10).
 // ---------------------------------------------------------------------------
 
 enum class CommandKind : std::uint8_t
@@ -115,7 +184,8 @@ enum class CommandKind : std::uint8_t
 	PlaceDebugObstacleAhead,   // P03 debug: block a cell ahead on a colonist's route
 	ToggleDebugObstacle,       // P03 debug: block/unblock one cell
 	ClearDebugObstacles,       // P03 debug: remove every debug obstacle
-	SetDoorOpen                // debug until P07: open/close an Exit Door socket
+	SetDoorOpen,               // debug until P07: open/close an Exit Door socket
+	AssignJob                  // P05: change a colonist's role (releases its work slot)
 };
 
 struct GameCommand
@@ -125,6 +195,7 @@ struct GameCommand
 	Cell cell;
 	std::uint32_t index = 0;   // door index for SetDoorOpen
 	bool flag = false;         // open/close for SetDoorOpen
+	Job job = Job::Engineer;   // new role for AssignJob
 
 	static GameCommand placeDebugObstacleAhead(ColonistId id)
 	{
@@ -152,6 +223,14 @@ struct GameCommand
 		command.kind = CommandKind::SetDoorOpen;
 		command.index = door_index;
 		command.flag = open;
+		return command;
+	}
+	static GameCommand assignJob(ColonistId id, Job new_job)
+	{
+		GameCommand command;
+		command.kind = CommandKind::AssignJob;
+		command.colonist = id;
+		command.job = new_job;
 		return command;
 	}
 };

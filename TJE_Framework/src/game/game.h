@@ -60,7 +60,10 @@ public:
 	std::unique_ptr<ColonyUIRenderer> ui_renderer;
 	bool scene_stats_logged;
 
-	Game(int window_width, int window_height, SDL_Window* window);
+	// scenario_path: scenario.json to start (main.cpp: --scenario <path>, P05). The
+	// default is the shipped start; dev/test scenarios live in data/arkfall/dev/.
+	static constexpr const char* default_scenario_path = "data/arkfall/scenario.json";
+	Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path = default_scenario_path);
 	~Game();
 
 	//main functions

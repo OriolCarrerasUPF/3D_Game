@@ -77,14 +77,17 @@ public:
 	bool buildStaticViews(const SceneLoadResult& scene, DataLoadError& error);
 
 	// ---- Simulation views -------------------------------------------------------
-	// Once per frame: creates/removes colonist views, moves them (interpolated by alpha
-	// between the last two ticks), rebuilds the navigation overlay when the grid revision
-	// changes and refreshes the route, selection and placement-ghost overlays.
-	// Throws std::runtime_error if a colonist's role visual cannot be created.
+	// Once per frame: creates/removes colonist and building views, moves colonists
+	// (interpolated by alpha between the last two ticks), rebuilds the navigation overlay
+	// when the grid revision changes and refreshes the route, selection and
+	// placement-ghost overlays. Building views come from the buildings.json visual
+	// composition (P05) and are posed once, when the building appears.
+	// Throws std::runtime_error if a role or building visual cannot be created.
 	void syncVisuals(const ColonySimulation& simulation, float interpolation_alpha);
 	// Drops every simulation-driven view and overlay (restart).
 	void clearSimulationViews();
 	std::size_t getColonistViewCount() const { return colonist_views.size(); }
+	std::size_t getBuildingViewCount() const { return building_views.size(); }
 
 	// ---- Picking (P04) ------------------------------------------------------------
 	// Nearest colonist whose transformed picking bounds the ray hits; equal distances
@@ -92,9 +95,13 @@ public:
 	bool pickColonist(const picking::Ray& ray, ColonistId& out_id, float& out_distance) const;
 	// Point where the ray meets the visual ground (terrain or the 0.1 m interior floor).
 	bool pickGround(const picking::Ray& ray, Vector3& out_point) const;
+	// Nearest building whose box (footprint x visual height) the ray hits (P05); equal
+	// distances resolve to the lowest BuildingId.
+	bool pickBuilding(const picking::Ray& ray, BuildingId& out_id, float& out_distance) const;
 
 	// ---- UI-driven markers (always visible, independent of the debug overlay) -----
 	void setSelectedColonist(ColonistId id) { selected_colonist = id; }
+	void setSelectedBuilding(BuildingId id) { selected_building = id; }
 	void setPlacementGhost(bool visible, Cell cell, bool valid, int quarter_turns);
 
 	// ---- Low-level dynamic views -------------------------------------------------
@@ -103,7 +110,8 @@ public:
 	DynamicViewId createDynamicView(const std::string& asset_id, const std::string& material_id, DataLoadError& error);
 	// Gameplay position (y is the planar gameplay height, normally 0) and yaw in radians
 	// using the world_transform convention. The view is drawn on the visual surface height.
-	bool setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians);
+	// `scale` multiplies the asset's own scale (building visuals, door width).
+	bool setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale = 1.0f);
 	bool destroyDynamicView(DynamicViewId id);
 	void clearDynamicViews();
 	bool hasDynamicView(DynamicViewId id) const { return dynamic_records.count(id) != 0; }
@@ -149,6 +157,12 @@ private:
 		DynamicViewId view = invalid_dynamic_view;
 		Job job = Job::Engineer;
 	};
+	struct BuildingView
+	{
+		std::vector<DynamicViewId> views;   // one per buildings.json visual
+		Vector3 box_min;                    // world AABB for picking (footprint x height)
+		Vector3 box_max;
+	};
 	struct OverlayLayer
 	{
 		std::unique_ptr<Mesh> mesh;
@@ -165,6 +179,8 @@ private:
 	};
 
 	void syncColonists(const ColonySimulation& simulation, float alpha);
+	void syncBuildings(const ColonySimulation& simulation);
+	void updateBuildingSelectionOverlay(const ColonySimulation& simulation);
 	void rebuildNavigationOverlay(const NavigationGrid& grid);
 	void updateRouteOverlay(const ColonySimulation& simulation, float alpha);
 	void updateSelectionOverlay();
@@ -184,6 +200,8 @@ private:
 	DynamicViewId next_dynamic_id = 1;
 
 	std::map<ColonistId, ColonistView> colonist_views;
+	std::map<BuildingId, BuildingView> building_views;
+	BuildingId selected_building = INVALID_BUILDING;
 	std::uint64_t overlay_revision = std::numeric_limits<std::uint64_t>::max();
 	ColonistId selected_colonist = INVALID_COLONIST;
 	PlacementGhost ghost;

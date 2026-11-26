@@ -10,7 +10,9 @@ navigation data. Generating one from the other keeps them consistent:
   matches the number of crossings (gate_simple is 1 m wide at scale 1);
 * the only blocking instances are the deposits and the static blockers declared in
   scenario.json, and each one is centred on its footprint;
-* no dynamic actors (colonists, runtime buildings) are written to the scene.
+* no dynamic actors (colonists, runtime or initial buildings) are written to the
+  scene: ColonyWorld spawns them from the simulation (initialBuildings use
+  buildings.json visuals).
 
 The script also re-checks the scenario rules that P03's ScenarioLoader enforces and
 verifies with a 4-neighbour BFS that the debug route is walkable through the door.
@@ -40,11 +42,10 @@ DEPOSIT_VISUALS = {
     "iron": {"assetId": "iron_deposit", "materialId": "resource"},
     "copper": {"assetId": "iron_deposit", "materialId": "resource_copper"},
 }
-# Static blocker id -> visual. Placeholders until P05/P07 spawn real buildings.
-BLOCKER_VISUALS = {
-    "oxygenator_preview": {"assetId": "oxygen_machine", "materialId": "machinery"},
-    "storage_preview": {"assetId": "storage_barrels", "materialId": "storage"},
-}
+# Static blocker id -> visual (every scenario blocker needs one: no invisible blockers).
+# P05 removed the P02/P03 placeholders (oxygenator_preview, storage_preview): buildings
+# are now simulation records spawned from buildings.json, never static scene entries.
+BLOCKER_VISUALS = {}
 # Rotation (degrees, world_transform convention) that moves the wall slab from the
 # local -X face to the requested side of its cell.
 WALL_ROTATION = {"west": 0.0, "east": 180.0, "south": 90.0, "north": -90.0}

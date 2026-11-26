@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32.0, -32.0]},
+  "base": {
+    "interior": { "min": [24, 24], "max": [39, 39] },
+    "exitDoors": [
+      {
+        "id": "west_door",
+        "openAtStart": true,
+        "crossings": [
+          { "outside": [23, 31], "inside": [24, 31] },
+          { "outside": [23, 32], "inside": [24, 32] }
+        ]
+      }
+    ]
+  },
+  "deposits": [
+    {"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
+    {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}
+  ],
+  "staticBlockers": [],
+  "initialColonists": [
+    {"id": 1, "job": "miner", "cell": [17, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 2, "job": "miner", "cell": [18, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 3, "job": "miner", "cell": [19, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 4, "job": "miner", "cell": [17, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 5, "job": "miner", "cell": [18, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 6, "job": "miner", "cell": [19, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 7, "job": "engineer", "cell": [17, 32], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 8, "job": "farmer", "cell": [18, 32], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}}
+  ],
+  "initialInventory": {"steel": 40, "components": 15, "vegetables": 5},
+  "cargoCapacity": 100,
+  "initialBuildings": [
+    {"type": "iron_mine", "origin": [8, 12], "quarterTurns": 0},
+    {"type": "storage", "origin": [30, 26], "quarterTurns": 0},
+    {"type": "storage", "origin": [34, 26], "quarterTurns": 0},
+    {"type": "iron_processor", "origin": [28, 33], "quarterTurns": 0}
+  ]
+}

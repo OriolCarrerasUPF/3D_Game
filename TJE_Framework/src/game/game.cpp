@@ -18,22 +18,11 @@ namespace
 	constexpr float camera_far_plane = 1000.0f;
 	constexpr float click_slop_pixels = 6.0f;   // a press that moves farther is not a click
 	constexpr float frame_padding_metres = 2.0f;
-
-	// ---- TEST: show one building model at startup ---------------------------------
-	// Put any building id from data/arkfall/assets.json here, or "" to show nothing:
-	//   "building_exit_door"        "building_storage"          "building_oxygenator"
-	//   "building_greenhouse"       "building_iron_processor"   "building_copper_processor"
-	//   "building_aurite_processor" "building_iron_mine"        "building_copper_mine"
-	//   "building_water_extractor"  "building_solar_panel"      "building_landing_pad"
-	//   "building_haven_beacon"
-	const char* const test_building_id = "building_solar_panel";
-	constexpr float test_building_x = 16.0f;   // world metres: 8 m east of the base wall
-	constexpr float test_building_z = 0.0f;
 }
 
 Game* Game::instance = NULL;
 
-Game::Game(int window_width, int window_height, SDL_Window* window)
+Game::Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path)
 	: window(window)
 	, window_width(window_width)
 	, window_height(window_height)
@@ -75,7 +64,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		throw std::runtime_error(scene_result.error->describe());
 
 	ScenarioLoader scenario_loader;
-	ScenarioLoadResult scenario_result = scenario_loader.load("data/arkfall/scenario.json");
+	ScenarioLoadResult scenario_result = scenario_loader.load(scenario_path);
 	if (!scenario_result)
 		throw std::runtime_error(scenario_result.error->describe());
 	DataLoadError blocker_error;
@@ -90,8 +79,16 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	if (!colonist_result)
 		throw std::runtime_error(colonist_result.error->describe());
 
-	// Only assets referenced by data are loaded: the static scene plus the role visuals
-	// used for dynamic colonist views.
+	// P05: the 13 building definitions (the only source of building values).
+	BuildingCatalogLoadResult building_result = definitions.buildings.load("data/arkfall/buildings.json");
+	if (!building_result)
+		throw std::runtime_error(building_result.error->describe());
+	building_result = definitions.buildings.validateVisuals(asset_catalog);
+	if (!building_result)
+		throw std::runtime_error(building_result.error->describe());
+
+	// Only assets referenced by data are loaded: the static scene, the role visuals used
+	// for colonist views and the building visuals of buildings.json.
 	std::set<std::string> referenced_assets;
 	for (const StaticSceneInstance& instance : scene_result.instances)
 		referenced_assets.insert(instance.asset_id);
@@ -100,15 +97,9 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 		(void)job;
 		referenced_assets.insert(role.asset_id);
 	}
-
-	// TEST building (see test_building_id at the top of this file)
-	if (*test_building_id)
-	{
-		if (!asset_catalog.findAsset(test_building_id))
-			throw std::runtime_error(std::string("test building: '") + test_building_id +
-				"' is not an asset id in data/arkfall/assets.json");
-		referenced_assets.insert(test_building_id);
-	}
+	for (const BuildingDefinition& building : definitions.buildings.getDefinitions())
+		for (const BuildingVisualDefinition& visual : building.visuals)
+			referenced_assets.insert(visual.asset_id);
 
 	// Validate all authored JSON and references before creating any OpenGL assets.
 	AssetCatalogLoadResult resource_result = asset_catalog.loadReferencedAssets(referenced_assets);
@@ -121,19 +112,11 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 
 	std::string simulation_error;
 	if (!simulation.initialize(scenario_result.scenario, definitions, simulation_error))
-		throw std::runtime_error("scenario.json: " + simulation_error);
+		throw std::runtime_error(scenario_path + ": " + simulation_error);
 	colony_world.syncVisuals(simulation, 0.0f);
-
-	// TEST building: visual only, it does not block colonists.
-	if (*test_building_id)
-	{
-		DataLoadError test_error;
-		const std::string& test_material = asset_catalog.findAsset(test_building_id)->material_id;
-		const DynamicViewId test_view = colony_world.createDynamicView(test_building_id, test_material, test_error);
-		if (test_view == invalid_dynamic_view)
-			throw std::runtime_error(test_error.describe());
-		colony_world.setDynamicViewPose(test_view, Vector3(test_building_x, 0.0f, test_building_z), 0.0f);
-	}
+	std::cout << " + Scenario " << scenario_path << ": " << simulation.getColonists().size() << " colonists, "
+		<< simulation.getBuildings().size() << " buildings, " << simulation.getInventory().getTotal() << "/"
+		<< simulation.getInventory().getCapacity() << " items" << std::endl;
 
 	ui_renderer = std::make_unique<ColonyUIRenderer>(asset_catalog);
 
@@ -152,7 +135,8 @@ Game::Game(int window_width, int window_height, SDL_Window* window)
 	instance = this;
 
 	std::cout << " + Controls: WASD/arrows pan, Q/E or middle-drag rotate, wheel zoom, left-click select, "
-		"B build mode, R rotate ghost, Space pause, -/+ speed, Esc/right-click cancel" << std::endl;
+		"B build mode, R rotate ghost, Space pause, -/+ speed, Esc/right-click cancel; "
+		"colonist popup: role buttons" << std::endl;
 	std::cout << " + Debug keys: F3 overlay, F4 obstacle ahead of the colonist, F6 clear obstacles, "
 		"F7 open/close Exit Door, F8 edge scrolling" << std::endl;
 }
@@ -289,7 +273,10 @@ void Game::update(double seconds_elapsed)
 		if (!selected || selected->state == ColonistState::Dead)
 			ui.clearSelection();
 	}
+	if (ui.getSelectedBuilding() != INVALID_BUILDING && !simulation.findBuilding(ui.getSelectedBuilding()))
+		ui.clearSelection();
 	colony_world.setSelectedColonist(ui.getSelectedColonist());
+	colony_world.setSelectedBuilding(ui.getSelectedBuilding());
 	colony_world.syncVisuals(simulation, static_cast<float>(simulation_clock.getInterpolationAlpha()));
 	ui.update(real_dt);
 }
@@ -310,10 +297,17 @@ void Game::processWorldClick()
 		ui.showMessage("Nothing to place yet: building types arrive with buildings.json (P05)");
 		return;
 	}
-	ColonistId id = INVALID_COLONIST;
-	float distance = 0.0f;
-	if (colony_world.pickColonist(makePointerRay(pending_click_position.x, pending_click_position.y), id, distance))
-		ui.select(id);
+	// The nearest hit wins; a colonist standing in front of a building is preferred on a tie.
+	const picking::Ray ray = makePointerRay(pending_click_position.x, pending_click_position.y);
+	ColonistId colonist_id = INVALID_COLONIST;
+	BuildingId building_id = INVALID_BUILDING;
+	float colonist_distance = 0.0f, building_distance = 0.0f;
+	const bool hit_colonist = colony_world.pickColonist(ray, colonist_id, colonist_distance);
+	const bool hit_building = colony_world.pickBuilding(ray, building_id, building_distance);
+	if (hit_colonist && (!hit_building || colonist_distance <= building_distance))
+		ui.select(colonist_id);
+	else if (hit_building)
+		ui.selectBuilding(building_id);
 	else
 		ui.clearSelection();
 }
@@ -402,6 +396,16 @@ void Game::handleUiAction(UiAction action)
 	case UiAction::SlowDown: setSpeedLevel(speed_level - 1); break;
 	case UiAction::SpeedUp: setSpeedLevel(speed_level + 1); break;
 	case UiAction::ToggleOverlay: colony_world.setDebugOverlayVisible(!colony_world.isDebugOverlayVisible()); break;
+	case UiAction::AssignEngineer:
+	case UiAction::AssignMiner:
+	case UiAction::AssignFarmer:
+	{
+		// Role change from the colonist popup goes through the command queue (P05).
+		Job job = Job::Engineer;
+		if (ColonyUI::jobForAction(action, job) && ui.getSelectedColonist() != INVALID_COLONIST)
+			queueCommand(GameCommand::assignJob(ui.getSelectedColonist(), job));
+		break;
+	}
 	case UiAction::ToggleBuildMode:   // ColonyUI already switched the mode
 	case UiAction::CloseSelection:    // ColonyUI already cleared the selection
 	case UiAction::None:

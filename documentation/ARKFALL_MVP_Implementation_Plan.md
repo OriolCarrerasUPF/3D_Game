@@ -1,8 +1,8 @@
 # ARKFALL: MVP Implementation Plan
 
-**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04)  
+**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04) · **Status update:** 25 November 2026 (P05 done)  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P04 are implemented (step reports: [P03_navigation_report.md](P03_navigation_report.md), [P04_camera_ui_report.md](P04_camera_ui_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](P02_asset_report.md), and the plan review of the same day is summarised in the next section.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P05 are implemented (step reports in `steps_reports/`: [P03_navigation_report.md](steps_reports/P03_navigation_report.md), [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md), [P05_production_report.md](steps_reports/P05_production_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](steps_reports/P02_asset_report.md), and the plan review of the same day is summarised in the next section.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
@@ -28,11 +28,12 @@ The whole plan was re-checked against the MVP Scope, the GDD and the code on `ma
 | Step | Status | Evidence / notes |
 |---|---|---|
 | P01 | Done, one item moved | Unified exit path, `Game::~Game`, wheel reset, debug-only F5. Escape still quits the game: P04 turns it into cancel/close and P10 adds the menu. |
-| P02 | Done | [P02_asset_report.md](P02_asset_report.md), including the 24 Nov corrections (matrix order, 2-cell door, visual-only walls, generated `scene.json`). |
-| P03 | Done | [P03_navigation_report.md](P03_navigation_report.md); 52 headless test cases pass in Debug. |
-| P04 | Done | [P04_camera_ui_report.md](P04_camera_ui_report.md); 69 headless test cases pass in Debug. |
-| P05 | Next | — |
-| P06–P11 | Pending | — |
+| P02 | Done | [P02_asset_report.md](steps_reports/P02_asset_report.md), including the 24 Nov corrections (matrix order, 2-cell door, visual-only walls, generated `scene.json`). |
+| P03 | Done | [P03_navigation_report.md](steps_reports/P03_navigation_report.md); 52 headless test cases pass in Debug. |
+| P04 | Done | [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md); 69 headless test cases pass in Debug. |
+| P05 | Done | [P05_production_report.md](steps_reports/P05_production_report.md); 95 headless test cases pass (Linux g++ headless build). |
+| P06 | Next | — |
+| P07–P11 | Pending | — |
 
 ### Corrections made by this review
 
@@ -780,7 +781,7 @@ TJE_Framework/
 ├── CMakeLists.txt                         [M: game + headless arkfall_tests/CTest — done]
 ├── README.md                              [M: build, tests, debug keys — done]
 ├── src/
-│   ├── main.cpp                           [M: unified shutdown — done P01; --scenario P05]
+│   ├── main.cpp                           [M: unified shutdown — done P01; --scenario done P05]
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
 │   │   ├── arkfall_types.h                 [N: IDs, Cell, Zone, DoorPortal, Job, states, commands — done]
@@ -791,8 +792,9 @@ TJE_Framework/
 │   │   ├── asset_catalog_resources.cpp     [N: shaders and meshes, needs GL — done]
 │   │   ├── scene_parser.h / .cpp           [M: scene.json → static instances — done]
 │   │   ├── scenario_loader.h / .cpp        [N: scenario.json + scene blocker check — done P03]
-│   │   ├── colonist_catalog.h / .cpp       [N: colonists.json roles — done P03; names P05]
-│   │   ├── building_catalog.h / .cpp       [N: buildings.json, 13 types — P05]
+│   │   ├── colonist_catalog.h / .cpp       [N: colonists.json roles — done P03; names done P05]
+│   │   ├── building_catalog.h / .cpp       [N: buildings.json, 13 types, quarter-turn transform — done P05]
+│   │   ├── inventory.h                     [N: shared item capacity, atomic transactions — done P05]
 │   │   ├── navigation_grid.h / .cpp        [N: zones, doors, BFS — done P03]
 │   │   ├── colony_simulation.h / .cpp      [N: gameplay records and ticks — P03 onward]
 │   │   ├── fixed_step_clock.h              [N: 1/30 s accumulator — done]
@@ -817,10 +819,10 @@ TJE_Framework/
 │   │   ├── scene.json                      [N: static visuals, generated from scenario.json]
 │   │   ├── scenario.json                   [N: grid, base, door, deposits, start state]
 │   │   ├── assets.json                     [N: asset paths/transforms/shaders]
-│   │   ├── buildings.json                  [N: 13 building definitions — P05]
-│   │   ├── colonists.json                  [N: role visuals/speed — P03; names P05]
+│   │   ├── buildings.json                  [N: 13 building definitions — done P05]
+│   │   ├── colonists.json                  [N: role visuals/speed — P03; names done P05]
 │   │   ├── materials.json                  [N: semantic palette/tints]
-│   │   ├── dev/*.json                      [N: dev/test scenarios — P05 onward]
+│   │   ├── dev/*.json                      [N: dev/test scenarios — production.json done P05]
 │   │   ├── models/*.obj / *.mtl             [N: selected runtime copies]
 │   │   └── License.txt                     [N: copied asset license]
 │   ├── shaders/
@@ -836,8 +838,9 @@ TJE_Framework/
     │   shipped_data tests                  [N: done]
     ├── navigation, scenario, simulation tests [N: done P03]
     ├── camera_and_picking, ui tests        [N: done P04]
-    └── building, production, survival, construction,
-        economy and outcome tests           [N: P05–P11]
+    ├── building, production tests          [N: done P05]
+    └── survival, construction, economy
+        and outcome tests                   [N: P06–P11]
 ```
 
 Keep new gameplay sources directly in `src/game`, which existing CMake already scans. The separate `arkfall_tests` target compiles only the headless sources listed in `ARKFALL_HEADLESS_SOURCES`; every new headless source is added there together with its tests. Pin and vendor the single-header `nlohmann/json` dependency under `libraries/nlohmann_json/`, record its exact version and license, and include it through CMake. Do not hand-roll JSON tokenization or use the framework `TextParser` for JSON.
@@ -996,7 +999,7 @@ After each step: build Debug, run `arkfall_tests` (every step adds its headless 
 
 **Covers:** MVP-01 foundation.  
 **Dependencies:** P01.  
-**Status:** done; see [P02_asset_report.md](P02_asset_report.md), including the 24 Nov corrections.
+**Status:** done; see [P02_asset_report.md](steps_reports/P02_asset_report.md), including the 24 Nov corrections.
 
 **Files:** new `TJE_Framework/src/game/asset_catalog.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`; modified existing `TJE_Framework/src/game/scene_parser.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/graphics/mesh.cpp` and CMake for the pinned JSON header; new `TJE_Framework/data/arkfall/{assets,materials,scene}.json`, selected runtime model copies and `TJE_Framework/data/shaders/arkfall_lit.fs`.
 
@@ -1025,7 +1028,7 @@ Use uniform asset scaling initially; this keeps the existing basic vertex shader
 
 **Covers:** MVP-01, MVP-05 foundation.  
 **Dependencies:** P02.  
-**Status:** done; see [P03_navigation_report.md](P03_navigation_report.md).
+**Status:** done; see [P03_navigation_report.md](steps_reports/P03_navigation_report.md).
 
 **Files:** new `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/data/arkfall/scenario.json`; modified `TJE_Framework/src/game/colony_world.h/.cpp`.
 
@@ -1078,7 +1081,7 @@ while remaining > 0 and route has next point:
 
 **Covers:** MVP-02, MVP-03, MVP-15 foundation.  
 **Dependencies:** P03.  
-**Status:** done; see [P04_camera_ui_report.md](P04_camera_ui_report.md). `ColonyUI` is split into a headless `ColonyUI` (state, layout, hit testing) and an OpenGL `ColonyUIRenderer`.
+**Status:** done; see [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md). `ColonyUI` is split into a headless `ColonyUI` (state, layout, hit testing) and an OpenGL `ColonyUIRenderer`.
 
 **Files:** new `TJE_Framework/src/game/strategy_camera.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`; modified `TJE_Framework/src/game/game.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp` (view sync and picking), `TJE_Framework/src/game/colony_simulation.h/.cpp` (command queue), `TJE_Framework/src/game/arkfall_types.h` (`GameCommand`, `CommandResult`).
 
@@ -1109,7 +1112,7 @@ Use the current `Camera::getRayDirection` implementation and verify whether the 
 
 **Covers:** MVP-06, MVP-09 and part of MVP-10.  
 **Dependencies:** P04.  
-**Status:** next.
+**Status:** done (25 Nov 2026), see [P05_production_report.md](steps_reports/P05_production_report.md).
 
 **Files:** new `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/data/arkfall/buildings.json`, `TJE_Framework/data/arkfall/dev/production.json`, `TJE_Framework/tests/building_tests.cpp`, `TJE_Framework/tests/production_tests.cpp`; modified `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/main.cpp` (`--scenario`), `TJE_Framework/data/arkfall/{assets,colonists,scenario}.json`, the needed building model copies and `TJE_Framework/tools/generate_arkfall_scene.py`.
 
@@ -1303,7 +1306,7 @@ Do not copy example shader/picking signatures from the slides without checking c
 | **H4 — Complete gameplay MVP** | P09–P10 | Grow population, win, lose and restart through UI. |
 | **H5 — Academic delivery** | P11 | Sound, completeness, Release validation and distributable package. |
 
-**Status (24 Nov 2026):** H0 and H1 complete (P01–P04); H2 starts with P05.
+**Status (25 Nov 2026):** H0 and H1 complete (P01–P04); H2 in progress (P05 done, P06 next).
 
 **Critical path:** navigation → reservations/task interruption → survival/services → construction → complete economy → population/outcomes.
 
@@ -1311,7 +1314,7 @@ Asset detailing, richer animation and advanced rendering must not delay H1–H4.
 
 ### E2. Automated checks worth implementing
 
-Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 69 cases after P04, covering data loading, shipped data, transforms/timing, navigation, P03 movement, commands, camera, picking and UI input.
+Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 95 cases after P05, covering data loading, shipped data, transforms/timing, navigation, P03 movement, commands, camera, picking, UI input, building data, placement, reservations, production and transactions.
 
 | Test group | Essential cases |
 |---|---|

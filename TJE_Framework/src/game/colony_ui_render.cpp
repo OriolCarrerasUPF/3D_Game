@@ -1,6 +1,7 @@
 #include "colony_ui_render.h"
 
 #include "asset_catalog.h"
+#include "building_catalog.h"
 #include "colony_simulation.h"
 
 #include "framework/utils.h"
@@ -72,6 +73,40 @@ namespace
 		return cut + "...";
 	}
 
+	// Greedy word wrap into at most max_lines lines; the last line is cut with "..." if needed.
+	std::vector<std::string> wrapText(const std::string& text, float max_width, float scale, std::size_t max_lines)
+	{
+		std::vector<std::string> lines;
+		std::string line;
+		std::size_t start = 0;
+		while (start < text.size())
+		{
+			std::size_t end = text.find(' ', start);
+			if (end == std::string::npos)
+				end = text.size();
+			const std::string word = text.substr(start, end - start);
+			const std::string candidate = line.empty() ? word : line + " " + word;
+			if (!line.empty() && measureTextWidth(candidate, scale) > max_width)
+			{
+				lines.push_back(line);
+				line = word;
+			}
+			else
+				line = candidate;
+			start = end + 1;
+		}
+		if (!line.empty())
+			lines.push_back(line);
+		if (lines.size() > max_lines)
+		{
+			lines.resize(max_lines);
+			lines.back() += " ...";
+		}
+		for (std::string& l : lines)
+			l = fitText(l, max_width, scale);
+		return lines;
+	}
+
 	float centeredTextY(const UiRect& rect, float scale)
 	{
 		return rect.y + (rect.h - glyph_height * scale) * 0.5f;
@@ -99,6 +134,7 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 
 	// ---- panels -------------------------------------------------------------------
 	quads.add("ui_panel", ui.getTopBar());
+	quads.add("ui_panel", ui.getResourceBar());
 	quads.add("ui_panel", ui.getHelpBar());
 
 	// Top bar: debug resource/status line (inventory arrives in P05).
@@ -117,6 +153,30 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 	texts.push_back({ status_x, centeredTextY(ui.getTopBar(), text_scale), fitText(line, status_room, text_scale),
 		hud.paused ? text_bad : text_white, text_scale });
 
+	// Resource bar (P05): the six stored items and the shared item capacity.
+	{
+		const Inventory& inventory = simulation.getInventory();
+		std::string items;
+		for (std::size_t i = 0; i < resource_type_count; ++i)
+		{
+			const ResourceType type = static_cast<ResourceType>(i);
+			items += (items.empty() ? "" : "  ") + std::string(BuildingCatalog::resourceLabel(type)) + " " + std::to_string(inventory.get(type));
+		}
+		const std::string capacity = "Items " + std::to_string(inventory.getTotal()) + "/" + std::to_string(inventory.getCapacity()) +
+			(simulation.usesCargoCapacity() ? " (cargo)" : "");
+		const UiRect& bar = ui.getResourceBar();
+		const float capacity_width = measureTextWidth(capacity, small_text_scale);
+		const bool full = inventory.getTotal() >= inventory.getCapacity();
+		texts.push_back({ 10.0f, centeredTextY(bar, small_text_scale),
+			fitText(items, width - capacity_width - 34.0f, small_text_scale), text_white, small_text_scale });
+		texts.push_back({ width - capacity_width - 10.0f, centeredTextY(bar, small_text_scale), capacity,
+			full ? text_bad : text_accent, small_text_scale });
+	}
+
+	// The selected colonist's role button is drawn as active.
+	const ColonistRecord* selected_colonist = simulation.findColonist(ui.getSelectedColonist());
+	const UiButton current_job_button = selected_colonist ? ColonyUI::jobButton(selected_colonist->job) : UiButton::None;
+
 	// Buttons.
 	for (int i = 0; i < static_cast<int>(UiButton::Count); ++i)
 	{
@@ -125,7 +185,8 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 			continue;
 		const bool active = (button == UiButton::Pause && hud.paused) ||
 			(button == UiButton::Build && ui.isBuildMode()) ||
-			(button == UiButton::Overlay && hud.debug_overlay);
+			(button == UiButton::Overlay && hud.debug_overlay) ||
+			(button != UiButton::None && button == current_job_button);
 		const bool hot = ui.getHoveredButton() == button || ui.getPressedButton() == button;
 		const UiRect& rect = ui.getButtonRect(button);
 		if (button != UiButton::ClosePopup)
@@ -137,34 +198,41 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 	}
 
 	// Help line.
-	const std::string help = "WASD pan  Q/E or middle-drag rotate  Wheel zoom  Click select  B build  "
+	const std::string help = "WASD pan  Q/E or middle-drag rotate  Wheel zoom  Click colonist/building  B build  "
 		"Space/-/+ speed  Esc cancel  F3 debug";
 	texts.push_back({ 8.0f, centeredTextY(ui.getHelpBar(), small_text_scale),
 		fitText(help, width - 16.0f, small_text_scale), text_dim, small_text_scale });
 
-	// ---- colonist popup -----------------------------------------------------------
+	// ---- colonist / building popup --------------------------------------------------
 	if (ui.isPopupVisible())
 	{
 		const UiRect& popup = ui.getPopupRect();
 		quads.add("ui_panel", popup);
-		const ColonistRecord* colonist = simulation.findColonist(ui.getSelectedColonist());
 		float y = popup.y + 10.0f;
 		const float x = popup.x + 12.0f;
 		const float inner = popup.w - 24.0f;
-		if (colonist)
+		const float line_room = inner - 26.0f; // keep clear of the close button on the title line
+		const BuildingRecord* building = simulation.findBuilding(ui.getSelectedBuilding());
+		if (selected_colonist)
 		{
-			texts.push_back({ x, y, "Colonist #" + std::to_string(colonist->id), text_accent, text_scale });
+			const ColonistRecord* colonist = selected_colonist;
+			texts.push_back({ x, y, fitText(colonist->name + "  #" + std::to_string(colonist->id), line_room, text_scale), text_accent, text_scale });
 			y += 22.0f;
 			texts.push_back({ x, y, std::string("Job: ") + ColonyUI::jobName(colonist->job), text_white, text_scale });
 			y += 18.0f;
 			texts.push_back({ x, y, std::string("State: ") + ColonyUI::stateName(colonist->state), text_white, text_scale });
 			y += 18.0f;
+			// Current task / why it is idle (P05), wrapped so the reason is never cut off.
+			for (const std::string& line : wrapText("Task: " + colonist->status, inner, small_text_scale, 2))
+			{
+				texts.push_back({ x, y, line, text_dim, small_text_scale });
+				y += 13.0f;
+			}
+			y += 3.0f;
 			const NavigationGrid& grid = simulation.getGrid();
 			const Cell cell = colonist->last_cell;
 			texts.push_back({ x, y, "Cell (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ") " +
-				(grid.getZone(cell) == Zone::Inside ? "inside" : "outside"), text_white, text_scale });
-			y += 18.0f;
-			texts.push_back({ x, y, fitText(colonist->status, inner, small_text_scale), text_dim, small_text_scale });
+				(grid.getZone(cell) == Zone::Inside ? "inside" : "outside"), text_dim, small_text_scale });
 			y += 22.0f;
 
 			const struct { const char* label; float value; const char* material; } needs[] = {
@@ -185,7 +253,100 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 				texts.push_back({ bar_x + bar_w + 8.0f, y + 1.0f, value, need.value <= 20.0f ? text_bad : text_white, text_scale });
 				y += 22.0f;
 			}
-			texts.push_back({ x, popup.y + popup.h - 20.0f, "Names and job changes arrive in P05", text_dim, small_text_scale });
+			const float roles_y = ui.getButtonRect(UiButton::JobEngineer).y - 16.0f;
+			texts.push_back({ x, roles_y, "Role (frees the current work slot):", text_dim, small_text_scale });
+		}
+		else if (building)
+		{
+			const BuildingDefinition* def = simulation.findDefinition(building->type);
+			const std::string label = def ? def->label : std::string("Building");
+			texts.push_back({ x, y, fitText(label + "  #" + std::to_string(building->id), line_room, text_scale), text_accent, text_scale });
+			y += 22.0f;
+			std::string where;
+			if (building->door_index)
+				where = "on Exit Door socket " + std::to_string(*building->door_index);
+			else
+				where = std::to_string(building->width) + "x" + std::to_string(building->height) + " at (" +
+					std::to_string(building->origin.x) + ", " + std::to_string(building->origin.z) + "), " +
+					std::to_string(building->quarter_turns * 90) + " deg";
+			texts.push_back({ x, y, fitText(std::string(building->isComplete() ? "Complete" : "Blueprint") + ", " + where, inner, small_text_scale),
+				text_dim, small_text_scale });
+			y += 20.0f;
+
+			if (def && def->has_operation)
+			{
+				const int present = simulation.countPresentWorkers(*building);
+				const int reserved = simulation.countReservedWorkers(*building);
+				texts.push_back({ x, y, std::to_string(building->slots.size()) + " " + ColonyUI::jobName(def->operation_role) +
+					" slot" + (building->slots.size() == 1 ? "" : "s") + ":", text_white, text_scale });
+				y += 16.0f;
+				texts.push_back({ x, y, std::to_string(present) + " present, " + std::to_string(reserved) + " reserved",
+					present > 0 ? text_good : text_white, small_text_scale });
+				y += 15.0f;
+				for (std::size_t slot = 0; slot < building->slots.size(); ++slot)
+				{
+					const ColonistRecord* owner = simulation.findColonist(building->slots[slot]);
+					std::string text = "  slot " + std::to_string(slot + 1) + ": ";
+					if (!owner)
+						text += "free";
+					else
+						text += owner->name + (owner->state == ColonistState::Working ? " (working)" : " (on the way)");
+					texts.push_back({ x, y, fitText(text, inner, small_text_scale), owner ? text_white : text_dim, small_text_scale });
+					y += 14.0f;
+				}
+				y += 4.0f;
+			}
+			else
+			{
+				texts.push_back({ x, y, "No operating workers", text_dim, text_scale });
+				y += 18.0f;
+			}
+
+			const bool running = building->status == BuildingStatus::Running || building->status == BuildingStatus::Idle;
+			for (const std::string& line : wrapText("Status: " + building->status_text, inner, text_scale, 2))
+			{
+				texts.push_back({ x, y, line, running ? text_good : text_bad, text_scale });
+				y += 16.0f;
+			}
+			y += 4.0f;
+			if (def && def->recipe)
+			{
+				const RecipeDefinition& recipe = *def->recipe;
+				auto list = [](const ResourceAmounts& amounts) {
+					std::string out;
+					for (std::size_t i = 0; i < resource_type_count; ++i)
+					{
+						const ResourceType type = static_cast<ResourceType>(i);
+						if (amounts[type] > 0)
+							out += (out.empty() ? "" : " + ") + std::to_string(amounts[type]) + " " + BuildingCatalog::resourceLabel(type);
+					}
+					return out.empty() ? std::string("nothing") : out;
+				};
+				char seconds[16];
+				std::snprintf(seconds, sizeof(seconds), "%.0f", recipe.seconds);
+				const std::string inputs = recipe.inputs.empty() ? std::string() : list(recipe.inputs) + " -> ";
+				for (const std::string& line : wrapText("Recipe: " + inputs + list(recipe.outputs) + " every " + seconds + " s" +
+						(recipe.per_present_worker ? " per present worker" : ""), inner, small_text_scale, 2))
+				{
+					texts.push_back({ x, y, line, text_dim, small_text_scale });
+					y += 13.0f;
+				}
+				y += 5.0f;
+				const float bar_w = inner - 60.0f;
+				quads.add("ui_bar_back", UiRect{ x, y, bar_w, 10.0f });
+				quads.add("ui_progress", UiRect{ x, y, bar_w * std::clamp(building->production_progress / recipe.seconds, 0.0f, 1.0f), 10.0f });
+				texts.push_back({ x + bar_w + 8.0f, y, std::to_string(building->cycles_completed) + " made", text_white, small_text_scale });
+				y += 18.0f;
+			}
+			if (def && def->storage_capacity > 0)
+			{
+				for (const std::string& line : wrapText("Adds " + std::to_string(def->storage_capacity) +
+						" item capacity; eat/drink point from P06", inner, small_text_scale, 2))
+				{
+					texts.push_back({ x, y, line, text_dim, small_text_scale });
+					y += 13.0f;
+				}
+			}
 		}
 	}
 

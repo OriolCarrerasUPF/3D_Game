@@ -26,6 +26,9 @@ namespace
 			"staticBlockers": [],
 			"initialColonists": [ { "id": 1, "job": "miner", "cell": [2, 7],
 				"needs": { "hunger": 100, "thirst": 100, "oxygen": 100 } } ],
+			"initialInventory": { "steel": 10 },
+			"cargoCapacity": 100,
+			"initialBuildings": [],
 			"debugRoute": { "colonistId": 1, "loop": true, "dwellSeconds": 0.5,
 				"stops": [ { "label": "store", "cell": [9, 7] }, { "label": "mine", "cell": [2, 1] } ] }
 		})");
@@ -46,7 +49,8 @@ namespace
 			out << R"({ "schemaVersion": 1, "roles": [
 				{ "job": "engineer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( },
 				{ "job": "miner", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( },
-				{ "job": "farmer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( } ] })";
+				{ "job": "farmer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( } ],
+				"names": [ "Ada", "Bram", "Cleo" ] })";
 		}
 		GameDefinitions definitions;
 		const ColonistCatalogLoadResult result = definitions.colonists.load(path);

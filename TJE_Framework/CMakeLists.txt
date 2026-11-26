@@ -91,6 +91,10 @@ target_link_libraries(${PROJECT_NAME} PRIVATE nlohmann_json::nlohmann_json)
 set_property(DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR} PROPERTY VS_STARTUP_PROJECT ${PROJECT_NAME})
 
 set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_WORKING_DIRECTORY "${DIR_ROOT}")
+# Optional start arguments for the Visual Studio debugger (P05), e.g.
+#   cmake -S . -B build -DARKFALL_DEBUG_ARGS="--scenario data/arkfall/dev/production.json"
+set(ARKFALL_DEBUG_ARGS "" CACHE STRING "Command line passed to TJE_Framework when started from Visual Studio")
+set_property(TARGET ${PROJECT_NAME} PROPERTY VS_DEBUGGER_COMMAND_ARGUMENTS "${ARKFALL_DEBUG_ARGS}")
 set_target_properties(${PROJECT_NAME} PROPERTIES 
                       XCODE_GENERATE_SCHEME TRUE
                       XCODE_SCHEME_WORKING_DIRECTORY "${DIR_ROOT}/")
@@ -165,6 +169,7 @@ set(ARKFALL_HEADLESS_SOURCES
     ${DIR_SOURCES}/game/navigation_grid.cpp
     ${DIR_SOURCES}/game/scenario_loader.cpp
     ${DIR_SOURCES}/game/colonist_catalog.cpp
+    ${DIR_SOURCES}/game/building_catalog.cpp
     ${DIR_SOURCES}/game/colony_simulation.cpp
     ${DIR_SOURCES}/game/strategy_camera.cpp
     ${DIR_SOURCES}/game/picking.cpp

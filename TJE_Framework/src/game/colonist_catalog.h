@@ -1,9 +1,10 @@
 #pragma once
 
-// Colonist role archetypes from data/arkfall/colonists.json (schema 1), headless.
-// P03 needs the visual (asset + role tint, GDD 3.1: Engineer orange, Miner yellow,
-// Farmer green) and the walking speed. P05 extends this file with the name pool and
-// role capabilities (plan C9.1) without changing the role list contract.
+// Colonist role archetypes and the display-name pool from data/arkfall/colonists.json
+// (schema 1), headless. Each role has its visual (asset + role tint, GDD 3.1: Engineer
+// orange, Miner yellow, Farmer green) and walking speed. P05 adds `names`: a pool of
+// unique display names handed out in stable colonist-ID order (plan C9.1). Role/building
+// compatibility is NOT here: buildings.json is its only source.
 
 #include "arkfall_types.h"
 #include "data_load_error.h"
@@ -12,6 +13,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <vector>
 
 class AssetCatalog;
 
@@ -39,8 +41,11 @@ public:
 
 	const ColonistRoleDefinition* findRole(Job job) const;
 	const std::map<Job, ColonistRoleDefinition>& getRoles() const { return roles; }
+	// Unique, non-empty display names in file order.
+	const std::vector<std::string>& getNames() const { return names; }
 
 private:
 	std::filesystem::path source_path;
 	std::map<Job, ColonistRoleDefinition> roles;
+	std::vector<std::string> names;
 };

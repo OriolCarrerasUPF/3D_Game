@@ -27,6 +27,9 @@ namespace
 			"staticBlockers": [ { "id": "crate", "min": [7, 7], "max": [8, 8] } ],
 			"initialColonists": [ { "id": 1, "job": "miner", "cell": [2, 7],
 				"needs": { "hunger": 100, "thirst": 90, "oxygen": 80 } } ],
+			"initialInventory": { "steel": 10 },
+			"cargoCapacity": 100,
+			"initialBuildings": [],
 			"debugRoute": { "colonistId": 1, "loop": true, "dwellSeconds": 0.5,
 				"stops": [ { "label": "mine", "cell": [2, 1] }, { "label": "store", "cell": [9, 9] } ] }
 		})");
@@ -232,4 +235,68 @@ TEST_CASE("scenario: shipped scenario.json, scene.json and colonists.json agree"
 	CHECK(role_result);
 	CHECK(roles.validateVisuals(catalog));
 	CHECK(roles.findRole(Job::Engineer) && roles.findRole(Job::Miner) && roles.findRole(Job::Farmer));
+}
+
+TEST_CASE("scenario: P05 start state (inventory, cargo capacity, initial buildings)")
+{
+	Json doc = validScenario();
+	doc["initialInventory"] = Json::parse(R"({ "steel": 60, "components": 20, "vegetables": 20 })");
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [6, 6], "quarterTurns": 1 },
+		{ "type": "exit_door", "socket": "door" } ])");
+	const ScenarioLoadResult result = parse(doc);
+	CHECK(result);
+	if (!result)
+	{
+		test::fail(__FILE__, __LINE__, result.error->describe());
+		return;
+	}
+	const ScenarioDefinition& s = result.scenario;
+	CHECK_EQ(s.initial_inventory[ResourceType::Steel], 60);
+	CHECK_EQ(s.initial_inventory[ResourceType::Aurite], 0);
+	CHECK_EQ(s.cargo_capacity, 100);
+	CHECK_EQ(s.initial_buildings.size(), static_cast<std::size_t>(2));
+	CHECK(!s.initial_buildings[0].on_socket);
+	CHECK(s.initial_buildings[0].origin == (Cell{ 6, 6 }));
+	CHECK_EQ(s.initial_buildings[0].quarter_turns, 1);
+	CHECK(s.initial_buildings[1].on_socket);
+	CHECK_EQ(s.initial_buildings[1].socket_id, std::string("door"));
+}
+
+TEST_CASE("scenario: rejects bad start state fields")
+{
+	Json doc = validScenario();
+	doc.erase("initialBuildings");
+	expectError(doc, "/initialBuildings", "missing initialBuildings");
+
+	doc = validScenario();
+	doc["initialInventory"]["gold"] = 1;
+	expectError(doc, "/initialInventory/gold", "unknown item");
+
+	doc = validScenario();
+	doc["initialInventory"]["steel"] = -1;
+	expectError(doc, "/initialInventory/steel", "negative item");
+
+	doc = validScenario();
+	doc["cargoCapacity"] = -5;
+	expectError(doc, "/cargoCapacity", "negative capacity");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [6, 6], "quarterTurns": 4 } ])");
+	expectError(doc, "/initialBuildings/0/quarterTurns", "quarter turns out of range");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [6, 6] } ])");
+	expectError(doc, "/initialBuildings/0/quarterTurns", "origin without quarterTurns");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "exit_door", "socket": "door", "origin": [6, 6], "quarterTurns": 0 } ])");
+	expectError(doc, "/initialBuildings/0", "both origin and socket");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "exit_door", "socket": "north_door" } ])");
+	expectError(doc, "/initialBuildings/0/socket", "unknown socket");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [16, 6], "quarterTurns": 0 } ])");
+	expectError(doc, "/initialBuildings/0/origin/0", "origin out of grid");
 }

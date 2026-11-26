@@ -67602,40 +67602,6 @@
       ],
       "blocksNavigation": true,
       "materialId": "resource_copper"
-    },
-    {
-      "id": "oxygenator_preview",
-      "assetId": "oxygen_machine",
-      "position": [
-        -1.74,
-        0.1,
-        0.0
-      ],
-      "rotationYDegrees": 0.0,
-      "scale": [
-        1.0,
-        1.0,
-        1.0
-      ],
-      "blocksNavigation": true,
-      "materialId": "machinery"
-    },
-    {
-      "id": "storage_preview",
-      "assetId": "storage_barrels",
-      "position": [
-        2.0,
-        0.1,
-        1.0
-      ],
-      "rotationYDegrees": 0.0,
-      "scale": [
-        1.0,
-        1.0,
-        1.0
-      ],
-      "blocksNavigation": true,
-      "materialId": "storage"
     }
   ]
 }

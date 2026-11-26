@@ -47,6 +47,15 @@ namespace
 	constexpr float cell_marker_lift = 0.03f;
 	constexpr float route_lift = 0.15f;
 	constexpr float selection_lift = 0.06f;
+	constexpr float min_building_pick_height = 0.4f;
+
+	// Rotates an XZ offset by yaw with the world_transform convention (+90 deg maps +X to +Z).
+	Vector3 rotateXZ(const Vector3& offset, float yaw)
+	{
+		const float c = std::cos(yaw);
+		const float s = std::sin(yaw);
+		return Vector3(offset.x * c - offset.z * s, offset.y, offset.x * s + offset.z * c);
+	}
 }
 
 // ---------------------------------------------------------------------------- EntityMesh
@@ -231,12 +240,14 @@ bool ColonyWorld::buildStaticViews(const SceneLoadResult& scene, DataLoadError& 
 void ColonyWorld::syncVisuals(const ColonySimulation& simulation, float alpha)
 {
 	alpha = std::clamp(alpha, 0.0f, 1.0f);
+	syncBuildings(simulation);
 	syncColonists(simulation, alpha);
 	const NavigationGrid& grid = simulation.getGrid();
 	if (overlay_revision != grid.getRevision())
 		rebuildNavigationOverlay(grid);
 	updateRouteOverlay(simulation, alpha);
 	updateSelectionOverlay();
+	updateBuildingSelectionOverlay(simulation);
 	updateGhostOverlay(grid);
 }
 
@@ -279,6 +290,136 @@ void ColonyWorld::syncColonists(const ColonySimulation& simulation, float alpha)
 	}
 }
 
+void ColonyWorld::syncBuildings(const ColonySimulation& simulation)
+{
+	// Remove views of buildings that no longer exist (restart; demolition is not in the MVP).
+	for (auto it = building_views.begin(); it != building_views.end();)
+	{
+		if (!simulation.findBuilding(it->first))
+		{
+			for (DynamicViewId view : it->second.views)
+				destroyDynamicView(view);
+			it = building_views.erase(it);
+		}
+		else
+			++it;
+	}
+
+	const NavigationGrid& grid = simulation.getGrid();
+	const float cell = grid.getCellSize();
+	for (const BuildingRecord& building : simulation.getBuildings())
+	{
+		if (building_views.count(building.id))
+			continue; // buildings never move: posed once
+		const BuildingDefinition* def = simulation.findDefinition(building.type);
+		if (!def)
+			continue;
+
+		// Placement frame: footprint centre and quarter-turn yaw; an Exit Door sits on its
+		// crossing edge (same rule as tools/generate_arkfall_scene.py) and is scaled to the
+		// crossing count.
+		Vector3 centre;
+		float base_yaw = static_cast<float>(building.quarter_turns) * 0.5f * PI;
+		float door_width = 0.0f;
+		float min_x = 0.0f, max_x = 0.0f, min_z = 0.0f, max_z = 0.0f;
+		if (building.door_index)
+		{
+			const std::vector<DoorPortal>& portals = grid.getDoorPortals(*building.door_index);
+			if (portals.empty())
+				continue;
+			const bool west_east = portals.front().inside.x != portals.front().outside.x;
+			float along = 0.0f;
+			for (const DoorPortal& portal : portals)
+			{
+				const Vector3 c = grid.cellCenter(portal.inside);
+				along += west_east ? c.z : c.x;
+			}
+			along /= static_cast<float>(portals.size());
+			const Cell a = portals.front().inside, b = portals.front().outside;
+			if (west_east)
+			{
+				const float edge_x = grid.getOriginX() + static_cast<float>(std::max(a.x, b.x)) * cell;
+				centre = Vector3(edge_x, 0.0f, along);
+				base_yaw = 0.5f * PI;
+			}
+			else
+			{
+				const float edge_z = grid.getOriginZ() + static_cast<float>(std::max(a.z, b.z)) * cell;
+				centre = Vector3(along, 0.0f, edge_z);
+				base_yaw = 0.0f;
+			}
+			door_width = static_cast<float>(portals.size()) * cell;
+			const float half_along = door_width * 0.5f, half_across = cell * 0.25f;
+			min_x = centre.x - (west_east ? half_across : half_along); max_x = centre.x + (west_east ? half_across : half_along);
+			min_z = centre.z - (west_east ? half_along : half_across); max_z = centre.z + (west_east ? half_along : half_across);
+		}
+		else
+		{
+			if (building.footprint_cells.empty())
+				continue;
+			int cx0 = building.footprint_cells.front().x, cx1 = cx0, cz0 = building.footprint_cells.front().z, cz1 = cz0;
+			for (Cell c : building.footprint_cells)
+			{
+				cx0 = std::min(cx0, c.x); cx1 = std::max(cx1, c.x);
+				cz0 = std::min(cz0, c.z); cz1 = std::max(cz1, c.z);
+			}
+			min_x = grid.getOriginX() + static_cast<float>(cx0) * cell;
+			max_x = grid.getOriginX() + static_cast<float>(cx1 + 1) * cell;
+			min_z = grid.getOriginZ() + static_cast<float>(cz0) * cell;
+			max_z = grid.getOriginZ() + static_cast<float>(cz1 + 1) * cell;
+			centre = Vector3((min_x + max_x) * 0.5f, 0.0f, (min_z + max_z) * 0.5f);
+		}
+
+		BuildingView view;
+		float top = min_building_pick_height;
+		for (const BuildingVisualDefinition& visual : def->visuals)
+		{
+			DataLoadError error;
+			const DynamicViewId id = createDynamicView(visual.asset_id, visual.material_id, error);
+			if (id == invalid_dynamic_view)
+				throw std::runtime_error(error.describe());
+			const AssetDefinition* asset = assets->findAsset(visual.asset_id);
+			float scale = visual.scale;
+			if (door_width > 0.0f && asset)
+			{
+				const float asset_width = asset->picking_bounds_max.x - asset->picking_bounds_min.x;
+				if (asset_width > 1e-4f)
+					scale *= door_width / asset_width;
+			}
+			const Vector3 position = centre + rotateXZ(visual.offset, base_yaw);
+			setDynamicViewPose(id, position, base_yaw + visual.yaw_degrees * DEG2RAD, scale);
+			if (asset)
+				top = std::max(top, asset->picking_bounds_max.y * scale + visual.offset.y);
+			view.views.push_back(id);
+		}
+		const float floor = getVisualGroundHeight(centre.x, centre.z);
+		view.box_min = Vector3(min_x, 0.0f, min_z);
+		view.box_max = Vector3(max_x, floor + top, max_z);
+		building_views.emplace(building.id, std::move(view));
+	}
+}
+
+void ColonyWorld::updateBuildingSelectionOverlay(const ColonySimulation& simulation)
+{
+	std::vector<Vector3> outline;
+	std::vector<Vector3> access;
+	const BuildingRecord* building = simulation.findBuilding(selected_building);
+	const auto view = building_views.find(selected_building);
+	if (building && view != building_views.end())
+	{
+		const NavigationGrid& grid = simulation.getGrid();
+		const Vector3& lo = view->second.box_min;
+		const Vector3& hi = view->second.box_max;
+		const float y = getVisualGroundHeight((lo.x + hi.x) * 0.5f, (lo.z + hi.z) * 0.5f) + selection_lift;
+		const Vector3 a(lo.x, y, lo.z), b(hi.x, y, lo.z), c(hi.x, y, hi.z), d(lo.x, y, hi.z);
+		outline.insert(outline.end(), { a, b, b, c, c, d, d, a });
+		for (Cell cell : building->access_cells)
+			addCellQuad(access, grid, cell, grid.getCellSize() * 0.2f, cell_marker_lift);
+	}
+	setOverlayLayer("building_selection", "ui_selection", OverlayPrimitive::Lines, outline, false);
+	setOverlayLayer("building_access", "ui_access", OverlayPrimitive::Triangles, access, false);
+}
+
 void ColonyWorld::clearSimulationViews()
 {
 	for (const auto& [id, view] : colonist_views)
@@ -287,6 +428,14 @@ void ColonyWorld::clearSimulationViews()
 		destroyDynamicView(view.view);
 	}
 	colonist_views.clear();
+	for (const auto& [id, view] : building_views)
+	{
+		(void)id;
+		for (DynamicViewId dynamic : view.views)
+			destroyDynamicView(dynamic);
+	}
+	building_views.clear();
+	selected_building = INVALID_BUILDING;
 	overlay_revision = std::numeric_limits<std::uint64_t>::max();
 	selected_colonist = INVALID_COLONIST;
 	ghost = PlacementGhost();
@@ -435,6 +584,29 @@ bool ColonyWorld::pickColonist(const picking::Ray& ray, ColonistId& out_id, floa
 	return found;
 }
 
+bool ColonyWorld::pickBuilding(const picking::Ray& ray, BuildingId& out_id, float& out_distance) const
+{
+	bool found = false;
+	float best = std::numeric_limits<float>::max();
+	BuildingId best_id = INVALID_BUILDING;
+	for (const auto& [id, view] : building_views) // ascending ids: ties keep the lowest
+	{
+		float t = 0.0f;
+		if (picking::intersectAabb(ray, view.box_min, view.box_max, t) && t < best)
+		{
+			best = t;
+			best_id = id;
+			found = true;
+		}
+	}
+	if (found)
+	{
+		out_id = best_id;
+		out_distance = best;
+	}
+	return found;
+}
+
 bool ColonyWorld::pickGround(const picking::Ray& ray, Vector3& out_point) const
 {
 	// Intersect y = 0, then refine once against the visual height found there (the
@@ -491,7 +663,7 @@ DynamicViewId ColonyWorld::createDynamicView(const std::string& asset_id, const 
 	return id;
 }
 
-bool ColonyWorld::setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians)
+bool ColonyWorld::setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale)
 {
 	const auto it = dynamic_records.find(id);
 	if (it == dynamic_records.end())
@@ -503,7 +675,7 @@ bool ColonyWorld::setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_p
 		gameplay_position.z);
 	record.visual_yaw = yaw_radians + group.forward_yaw;
 	group.view->setInstance(record.slot, world_transform::makeInstanceTransform(
-		record.visual_position, record.visual_yaw, Vector3(1.0f, 1.0f, 1.0f)));
+		record.visual_position, record.visual_yaw, Vector3(scale, scale, scale)));
 	return true;
 }
 
@@ -533,6 +705,7 @@ void ColonyWorld::clearDynamicViews()
 	dynamic_records.clear();
 	dynamic_groups.clear();
 	colonist_views.clear();
+	building_views.clear();
 	next_dynamic_id = 1;
 }
 

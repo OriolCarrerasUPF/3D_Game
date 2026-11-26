@@ -1,5 +1,6 @@
 #include "scenario_loader.h"
 
+#include "building_catalog.h"
 #include "scene_parser.h"
 
 #include <algorithm>
@@ -219,6 +220,55 @@ namespace
 		return true;
 	}
 
+	bool parseStartState(Reader& r, const Json& document, ScenarioDefinition& scenario)
+	{
+		if (!BuildingCatalog::readResourceAmounts(document["initialInventory"], ScenarioLoader::max_item_amount,
+				scenario.initial_inventory, r.file, "/initialInventory", r.error) ||
+			!json_data::readInt(document["cargoCapacity"], scenario.cargo_capacity, 0, ScenarioLoader::max_item_amount,
+				r.file, "/cargoCapacity", r.error) ||
+			!json_data::requireArray(document["initialBuildings"], 0, r.file, "/initialBuildings", r.error))
+			return false;
+
+		std::set<std::string> used_sockets;
+		for (std::size_t i = 0; i < document["initialBuildings"].size(); ++i)
+		{
+			const std::string pointer = childPointer("/initialBuildings", i);
+			const Json& item = document["initialBuildings"][i];
+			InitialBuildingDefinition building;
+			if (!r.keys(item, {"type"}, pointer, {"origin", "quarterTurns", "socket"}) ||
+				!json_data::readString(item["type"], building.type_id, r.file, childPointer(pointer, "type"), r.error))
+				return false;
+			const bool has_origin = item.contains("origin") || item.contains("quarterTurns");
+			building.on_socket = item.contains("socket");
+			if (has_origin == building.on_socket)
+				return r.fail(pointer, "give either origin + quarterTurns (footprint building) or socket (Exit Door)");
+			if (building.on_socket)
+			{
+				if (!json_data::readString(item["socket"], building.socket_id, r.file, childPointer(pointer, "socket"), r.error))
+					return false;
+				bool known = false;
+				for (const ExitDoorDefinition& door : scenario.exit_doors)
+					known = known || door.id == building.socket_id;
+				if (!known)
+					return r.fail(childPointer(pointer, "socket"), "unknown door socket '" + building.socket_id + "'");
+				if (!used_sockets.insert(building.socket_id).second)
+					return r.fail(childPointer(pointer, "socket"), "door socket '" + building.socket_id + "' already has a building");
+			}
+			else
+			{
+				if (!item.contains("origin"))
+					return r.fail(childPointer(pointer, "origin"), "required field is missing");
+				if (!item.contains("quarterTurns"))
+					return r.fail(childPointer(pointer, "quarterTurns"), "required field is missing");
+				if (!r.cell(item["origin"], building.origin, scenario.grid, childPointer(pointer, "origin")) ||
+					!json_data::readInt(item["quarterTurns"], building.quarter_turns, 0, 3, r.file, childPointer(pointer, "quarterTurns"), r.error))
+					return false;
+			}
+			scenario.initial_buildings.push_back(building);
+		}
+		return true;
+	}
+
 	bool parseDebugRoute(Reader& r, const Json& value, ScenarioDefinition& scenario)
 	{
 		DebugRouteDefinition route;
@@ -348,13 +398,15 @@ ScenarioLoadResult ScenarioLoader::parse(const json_data::Json& document, const 
 	std::set<std::string> ids; // doors, deposits and blockers share one id namespace
 
 	const bool ok =
-		r.keys(document, {"schemaVersion", "grid", "base", "deposits", "staticBlockers", "initialColonists"}, "", {"debugRoute"}) &&
+		r.keys(document, {"schemaVersion", "grid", "base", "deposits", "staticBlockers", "initialColonists",
+			"initialInventory", "cargoCapacity", "initialBuildings"}, "", {"debugRoute"}) &&
 		json_data::checkSchemaVersion(document, supported_schema_version, path, error) &&
 		parseGrid(r, document["grid"], scenario.grid) &&
 		parseBase(r, document["base"], scenario, ids) &&
 		parseDeposits(r, document["deposits"], scenario, ids) &&
 		parseBlockers(r, document["staticBlockers"], scenario, ids) &&
 		parseColonists(r, document["initialColonists"], scenario) &&
+		parseStartState(r, document, scenario) &&
 		(!document.contains("debugRoute") || parseDebugRoute(r, document["debugRoute"], scenario)) &&
 		validateLayout(r, scenario);
 

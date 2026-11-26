@@ -6,6 +6,7 @@
 #include "test_harness.h"
 
 #include "game/asset_catalog.h"
+#include "game/colony_simulation.h"
 #include "game/colony_ui.h"
 #include "game/json_data.h"
 #include "game/scene_parser.h"
@@ -188,4 +189,52 @@ TEST_CASE("shipped data: materials.json defines every HUD and marker colour")
 		if (!data.catalog.findMaterial(id))
 			test::fail(__FILE__, __LINE__, "materials.json is missing '" + id + "'");
 	}
+}
+
+TEST_CASE("shipped data: P05 start state, name pool and building visuals")
+{
+	ShippedData& data = shipped();
+	if (!data.ok)
+		return;
+	// Shipped start: no prebuilt base, F3 cargo in the 100-unit cargo hold, no placeholders.
+	CHECK(data.scenario["initialBuildings"].empty());
+	CHECK(data.scenario["staticBlockers"].empty());
+	CHECK_EQ(data.scenario["cargoCapacity"].get<int>(), 100);
+	CHECK_EQ(data.scenario["initialInventory"]["steel"].get<int>(), 60);
+	CHECK_EQ(data.scenario["initialInventory"]["components"].get<int>(), 20);
+	CHECK_EQ(data.scenario["initialInventory"]["vegetables"].get<int>(), 20);
+	for (const StaticSceneInstance& instance : data.scene.instances)
+		CHECK(instance.asset_id != "oxygen_machine" && instance.asset_id != "storage_barrels");
+
+	GameDefinitions definitions;
+	CHECK(definitions.colonists.load("data/arkfall/colonists.json"));
+	// 12 starting colonists + 188 Ark passengers (P09) need 200 unique names.
+	CHECK(definitions.colonists.getNames().size() >= 200u);
+	CHECK(definitions.buildings.load("data/arkfall/buildings.json"));
+	CHECK(definitions.buildings.validateVisuals(data.catalog));
+}
+
+TEST_CASE("shipped data: dev/production.json starts on the shipped map")
+{
+	ShippedData& data = shipped();
+	if (!data.ok)
+		return;
+	const ScenarioLoadResult dev = ScenarioLoader().load("data/arkfall/dev/production.json");
+	CHECK(dev);
+	if (!dev)
+	{
+		test::fail(__FILE__, __LINE__, dev.error->describe());
+		return;
+	}
+	// Dev scenarios reuse scene.json, so their blockers must agree with it.
+	DataLoadError error;
+	CHECK(ScenarioLoader::validateSceneBlockers(dev.scenario, data.scene.instances, "data/arkfall/scene.json", error));
+	GameDefinitions definitions;
+	CHECK(definitions.colonists.load("data/arkfall/colonists.json"));
+	CHECK(definitions.buildings.load("data/arkfall/buildings.json"));
+	ColonySimulation simulation;
+	std::string init_error;
+	CHECK(simulation.initialize(dev.scenario, definitions, init_error));
+	if (!init_error.empty())
+		test::fail(__FILE__, __LINE__, init_error);
 }

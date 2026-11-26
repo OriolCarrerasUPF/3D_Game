@@ -2,8 +2,9 @@
 
 // HUD state, layout and pointer hit testing (plan P04, T16), headless.
 //
-// ColonyUI owns what the player is doing with the interface: the selected colonist,
-// build mode and its ghost rotation, the pressed button and the toast message. It
+// ColonyUI owns what the player is doing with the interface: the selected colonist or
+// building (P05), build mode and its ghost rotation, the pressed button and the toast
+// message. It
 // receives pointer events BEFORE the world (UI first), says whether it consumed them
 // and returns a UiAction for Game to execute. It never touches the simulation:
 // gameplay changes go through GameCommand. Drawing lives in ColonyUIRenderer
@@ -36,7 +37,10 @@ enum class UiAction : std::uint8_t
 	SpeedUp,
 	ToggleBuildMode,
 	ToggleOverlay,
-	CloseSelection
+	CloseSelection,
+	AssignEngineer,   // P05 colonist popup: role buttons (Game queues GameCommand::assignJob)
+	AssignMiner,
+	AssignFarmer
 };
 
 enum class PointerType : std::uint8_t { Move, Down, Up };
@@ -56,12 +60,18 @@ struct UiPointerResult
 	UiAction action = UiAction::None;
 };
 
-enum class UiButton : std::uint8_t { Pause, SlowDown, SpeedUp, Build, Overlay, ClosePopup, Count, None };
+enum class UiButton : std::uint8_t
+{
+	Pause, SlowDown, SpeedUp, Build, Overlay, ClosePopup,
+	JobEngineer, JobMiner, JobFarmer,   // colonist popup only
+	Count, None
+};
 
 class ColonyUI
 {
 public:
 	static constexpr float top_bar_height = 34.0f;
+	static constexpr float resource_bar_height = 22.0f;   // P05 inventory line under the top bar
 	static constexpr float help_bar_height = 24.0f;
 
 	ColonyUI();
@@ -78,10 +88,13 @@ public:
 	UiPointerResult handlePointer(const PointerEvent& event);
 	bool isPointerOverUi(float x, float y) const;
 
-	// Selection (IDs only; the popup reads the record from the simulation).
-	void select(ColonistId id) { selected_colonist = id; }
-	void clearSelection() { selected_colonist = INVALID_COLONIST; }
+	// Selection (IDs only; the popup reads the record from the simulation). A colonist and
+	// a building are never selected at the same time.
+	void select(ColonistId id) { selected_colonist = id; selected_building = INVALID_BUILDING; }
+	void selectBuilding(BuildingId id) { selected_building = id; selected_colonist = INVALID_COLONIST; }
+	void clearSelection() { selected_colonist = INVALID_COLONIST; selected_building = INVALID_BUILDING; }
 	ColonistId getSelectedColonist() const { return selected_colonist; }
+	BuildingId getSelectedBuilding() const { return selected_building; }
 
 	// Build mode shell: ghost rotation in quarter turns (R key). Placement is P07.
 	void setBuildMode(bool enabled);
@@ -101,6 +114,7 @@ public:
 
 	// Layout queries used by the renderer and the tests.
 	const UiRect& getTopBar() const { return top_bar; }
+	const UiRect& getResourceBar() const { return resource_bar; }
 	const UiRect& getHelpBar() const { return help_bar; }
 	const UiRect& getPopupRect() const { return popup; }
 	const UiRect& getBuildPanelRect() const { return build_panel; }
@@ -108,10 +122,13 @@ public:
 	bool isButtonVisible(UiButton button) const;
 	UiButton getHoveredButton() const { return hovered; }
 	UiButton getPressedButton() const { return pressed; }
-	bool isPopupVisible() const { return selected_colonist != INVALID_COLONIST; }
+	bool isPopupVisible() const { return selected_colonist != INVALID_COLONIST || selected_building != INVALID_BUILDING; }
 
 	static const char* buttonLabel(UiButton button);
 	static UiAction actionFor(UiButton button);
+	// Role button for a job / role ordered by an action (false for other actions).
+	static UiButton jobButton(Job job);
+	static bool jobForAction(UiAction action, Job& out_job);
 
 	// Display names shared by the HUD (kept here so they are testable).
 	static const char* jobName(Job job);
@@ -129,12 +146,14 @@ private:
 	float width = 0.0f;
 	float height = 0.0f;
 	UiRect top_bar;
+	UiRect resource_bar;
 	UiRect help_bar;
 	UiRect popup;
 	UiRect build_panel;
 	UiRect buttons[static_cast<int>(UiButton::Count)];
 
 	ColonistId selected_colonist = INVALID_COLONIST;
+	BuildingId selected_building = INVALID_BUILDING;
 	bool build_mode = false;
 	int ghost_quarter_turns = 0;
 	UiButton hovered = UiButton::None;
