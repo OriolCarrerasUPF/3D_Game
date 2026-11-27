@@ -3,19 +3,18 @@
 scene.json is the static *visual* layout; scenario.json is the authoritative grid /
 navigation data. Generating one from the other keeps them consistent:
 
-* the base boundary is drawn on cell EDGES around the interior rectangle; wall
-  pieces never block navigation (the navigation grid models the boundary as
-  inside/outside zones that only connect through Exit Door crossings);
-* every Exit Door crossing edge is left open and gets a gate visual whose width
-  matches the number of crossings (gate_simple is 1 m wide at scale 1);
+* every grid cell gets a terrain tile (instanced as one draw group);
 * the only blocking instances are the deposits and the static blockers declared in
   scenario.json, and each one is centred on its footprint;
-* no dynamic actors (colonists, runtime or initial buildings) are written to the
-  scene: ColonyWorld spawns them from the simulation (initialBuildings use
-  buildings.json visuals).
+* since P05B there is no predefined base: Exit Doors, corridors (floors, walls,
+  arches, junction caps) and domes are runtime building views spawned from the
+  simulation (initialBuildings use buildings.json visuals), never static scene entries;
+* no dynamic actors (colonists) are written to the scene.
 
-The script also re-checks the scenario rules that P03's ScenarioLoader enforces and
-verifies with a 4-neighbour BFS that the debug route is walkable through the door.
+The script also re-checks the scenario rules that ScenarioLoader enforces for the
+scene (cells in the grid, no overlapping blockers, colonists and debug-route stops on
+free cells). Route reachability through doors depends on initialBuildings and is
+checked by ColonySimulation::initialize.
 
 Usage (from TJE_Framework/):  python tools/generate_arkfall_scene.py [--check]
 --check  validates and compares with the existing scene.json without writing it.
@@ -26,7 +25,6 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from collections import deque
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -34,10 +32,6 @@ DATA = ROOT / "data" / "arkfall"
 
 # Visual authoring choices (scene-only; gameplay data stays in scenario.json).
 TERRAIN_ASSET = "terrain_tile"
-FLOOR_ASSET = "interior_floor"          # 2x2 m module, 0.1 m high
-FLOOR_MODULE_CELLS = 2
-WALL_ASSET = "base_boundary"            # thin slab on the local -X face of a 1 m cell
-GATE_ASSET = "exit_gate"                # 1 m wide on local X at scale 1
 DEPOSIT_VISUALS = {
     "iron": {"assetId": "iron_deposit", "materialId": "resource"},
     "copper": {"assetId": "iron_deposit", "materialId": "resource_copper"},
@@ -46,9 +40,6 @@ DEPOSIT_VISUALS = {
 # P05 removed the P02/P03 placeholders (oxygenator_preview, storage_preview): buildings
 # are now simulation records spawned from buildings.json, never static scene entries.
 BLOCKER_VISUALS = {}
-# Rotation (degrees, world_transform convention) that moves the wall slab from the
-# local -X face to the requested side of its cell.
-WALL_ROTATION = {"west": 0.0, "east": 180.0, "south": 90.0, "north": -90.0}
 
 
 class ScenarioError(Exception):
@@ -101,60 +92,17 @@ def asset_extent(asset):
 
 
 def validate_scenario(scenario, grid: Grid):
-    """Mirror of the P03 ScenarioLoader rules that matter for the scene."""
+    """Mirror of the ScenarioLoader rules that matter for the scene."""
     if scenario.get("schemaVersion") != 1:
         raise ScenarioError("schemaVersion: expected 1")
-    interior = scenario["base"]["interior"]
-    imin, imax = cell_tuple(interior["min"], "base.interior.min"), cell_tuple(interior["max"], "base.interior.max")
-    if not (grid.inside(imin) and grid.inside(imax) and imin[0] <= imax[0] and imin[1] <= imax[1]):
-        raise ScenarioError("base.interior: rectangle must be inside the grid with min <= max")
-    if imin[0] == 0 or imin[1] == 0 or imax[0] == grid.width - 1 or imax[1] == grid.height - 1:
-        raise ScenarioError("base.interior: leave at least one exterior cell around the base")
-
-    def is_interior(c):
-        return imin[0] <= c[0] <= imax[0] and imin[1] <= c[1] <= imax[1]
-
-    crossings = {}
-    door_cells = set()
-    door_ids = set()
-    for d_index, door in enumerate(scenario["base"]["exitDoors"]):
-        where = f"base.exitDoors[{d_index}]"
-        if door["id"] in door_ids:
-            raise ScenarioError(f"{where}.id: duplicate door id")
-        door_ids.add(door["id"])
-        if not door["crossings"]:
-            raise ScenarioError(f"{where}.crossings: at least one crossing is required")
-        sides = set()
-        for c_index, crossing in enumerate(door["crossings"]):
-            cw = f"{where}.crossings[{c_index}]"
-            out_c = cell_tuple(crossing["outside"], cw + ".outside")
-            in_c = cell_tuple(crossing["inside"], cw + ".inside")
-            if not (grid.inside(out_c) and grid.inside(in_c)):
-                raise ScenarioError(f"{cw}: cells must be inside the grid")
-            if is_interior(out_c) or not is_interior(in_c):
-                raise ScenarioError(f"{cw}: 'outside' must be exterior and 'inside' interior")
-            delta = (in_c[0] - out_c[0], in_c[1] - out_c[1])
-            side = {(1, 0): "west", (-1, 0): "east", (0, 1): "south", (0, -1): "north"}.get(delta)
-            if side is None:
-                raise ScenarioError(f"{cw}: cells must be 4-neighbours")
-            key = frozenset((out_c, in_c))
-            if key in crossings:
-                raise ScenarioError(f"{cw}: crossing already used by another door")
-            crossings[key] = door["id"]
-            sides.add(side)
-            door_cells.update((out_c, in_c))
-        if len(sides) != 1:
-            raise ScenarioError(f"{where}: all crossings of one door must be on the same side")
-        along = sorted(cell_tuple(c["inside"], "")[1 if next(iter(sides)) in ("west", "east") else 0] for c in door["crossings"])
-        if along != list(range(along[0], along[0] + len(along))):
-            raise ScenarioError(f"{where}: crossings must be contiguous")
-        door["_side"] = next(iter(sides))
+    if "base" in scenario:
+        raise ScenarioError("base: removed in P05B (the base is built from Exit Doors and corridors)")
 
     blocked = {}
     for index, deposit in enumerate(scenario["deposits"]):
         c = cell_tuple(deposit["cell"], f"deposits[{index}].cell")
-        if not grid.inside(c) or is_interior(c):
-            raise ScenarioError(f"deposits[{index}]: deposit must be an exterior grid cell")
+        if not grid.inside(c):
+            raise ScenarioError(f"deposits[{index}]: deposit must be a grid cell")
         if deposit["resource"] not in DEPOSIT_VISUALS:
             raise ScenarioError(f"deposits[{index}].resource: unknown resource")
         if c in blocked:
@@ -170,9 +118,6 @@ def validate_scenario(scenario, grid: Grid):
                 if (x, z) in blocked:
                     raise ScenarioError(f"staticBlockers[{index}]: overlaps {blocked[(x, z)]}")
                 blocked[(x, z)] = blocker["id"]
-    for c in door_cells:
-        if c in blocked:
-            raise ScenarioError(f"door crossing cell {c} is blocked by {blocked[c]}")
 
     colonist_ids = set()
     for index, colonist in enumerate(scenario["initialColonists"]):
@@ -183,48 +128,19 @@ def validate_scenario(scenario, grid: Grid):
         if not grid.inside(c) or c in blocked:
             raise ScenarioError(f"initialColonists[{index}].cell: must be a free grid cell")
 
-    def neighbours(c):
-        for dx, dz in ((1, 0), (-1, 0), (0, 1), (0, -1)):
-            n = (c[0] + dx, c[1] + dz)
-            if not grid.inside(n) or n in blocked:
-                continue
-            if is_interior(c) != is_interior(n):
-                door_id = crossings.get(frozenset((c, n)))
-                door = next((d for d in scenario["base"]["exitDoors"] if d["id"] == door_id), None)
-                if door is None or not door["openAtStart"]:
-                    continue
-            yield n
-
-    def reachable(a, b):
-        seen, queue = {a}, deque([a])
-        while queue:
-            c = queue.popleft()
-            if c == b:
-                return True
-            for n in neighbours(c):
-                if n not in seen:
-                    seen.add(n)
-                    queue.append(n)
-        return False
-
     route = scenario.get("debugRoute")
     if route:
-        colonist = next((c for c in scenario["initialColonists"] if c["id"] == route["colonistId"]), None)
-        if colonist is None:
+        if route["colonistId"] not in colonist_ids:
             raise ScenarioError("debugRoute.colonistId: unknown colonist")
-        cells = [cell_tuple(colonist["cell"], "")] + [cell_tuple(s["cell"], f"debugRoute.stops[{i}].cell") for i, s in enumerate(route["stops"])]
-        if route["loop"]:
-            cells.append(cells[1])
-        for a, b in zip(cells, cells[1:]):
-            if not grid.inside(b) or b in blocked:
-                raise ScenarioError(f"debugRoute: stop {b} is not a free cell")
-            if not reachable(a, b):
-                raise ScenarioError(f"debugRoute: no 4-neighbour path from {a} to {b}")
-    return imin, imax, blocked
+        for i, stop in enumerate(route["stops"]):
+            c = cell_tuple(stop["cell"], f"debugRoute.stops[{i}].cell")
+            if not grid.inside(c) or c in blocked:
+                raise ScenarioError(f"debugRoute.stops[{i}]: stop {c} is not a free cell")
+    return blocked
 
 
 def build_scene(scenario, assets, grid: Grid):
-    imin, imax, _ = validate_scenario(scenario, grid)
+    validate_scenario(scenario, grid)
     instances = []
 
     def add(instance_id, asset_id, position, rotation=0.0, scale=1.0, blocks=False, material=None):
@@ -246,56 +162,12 @@ def build_scene(scenario, assets, grid: Grid):
             cx, cz = grid.center((x, z))
             add(f"terrain_{x:02d}_{z:02d}", TERRAIN_ASSET, (cx, 0.0, cz))
 
-    # Interior floor: 2x2 m modules covering the interior rectangle.
-    size_x, size_z = imax[0] - imin[0] + 1, imax[1] - imin[1] + 1
-    if size_x % FLOOR_MODULE_CELLS or size_z % FLOOR_MODULE_CELLS:
-        raise ScenarioError("base.interior: size must be a multiple of the 2x2 floor module")
-    floor_height = asset_extent(assets[FLOOR_ASSET])[1]
-    for j in range(size_z // FLOOR_MODULE_CELLS):
-        for i in range(size_x // FLOOR_MODULE_CELLS):
-            x = grid.edge_x(imin[0] + i * FLOOR_MODULE_CELLS) + FLOOR_MODULE_CELLS * grid.cell * 0.5
-            z = grid.edge_z(imin[1] + j * FLOOR_MODULE_CELLS) + FLOOR_MODULE_CELLS * grid.cell * 0.5
-            add(f"floor_{i}_{j}", FLOOR_ASSET, (x, 0.0, z))
-
-    # Boundary walls on the interior perimeter edges, skipping door crossing edges.
-    open_edges = set()
-    for door in scenario["base"]["exitDoors"]:
-        for crossing in door["crossings"]:
-            open_edges.add(tuple(crossing["inside"]) + (door["_side"],))
-    for z in range(imin[1], imax[1] + 1):
-        for side, x in (("west", imin[0]), ("east", imax[0])):
-            if (x, z, side) not in open_edges:
-                cx, cz = grid.center((x, z))
-                add(f"wall_{side}_{z}", WALL_ASSET, (cx, 0.0, cz), WALL_ROTATION[side])
-    for x in range(imin[0], imax[0] + 1):
-        for side, z in (("south", imin[1]), ("north", imax[1])):
-            if (x, z, side) not in open_edges:
-                cx, cz = grid.center((x, z))
-                add(f"wall_{side}_{x}", WALL_ASSET, (cx, 0.0, cz), WALL_ROTATION[side])
-
-    # One gate per Exit Door, centred on its crossing edges and as wide as the door.
-    gate_width = asset_extent(assets[GATE_ASSET])[0]
-    for door in scenario["base"]["exitDoors"]:
-        side = door["_side"]
-        insides = [tuple(c["inside"]) for c in door["crossings"]]
-        if side in ("west", "east"):
-            edge = grid.edge_x(insides[0][0] + (0 if side == "west" else 1))
-            zs = [grid.center(c)[1] for c in insides]
-            position, rotation = (edge, 0.0, sum(zs) / len(zs)), 90.0
-        else:
-            edge = grid.edge_z(insides[0][1] + (0 if side == "south" else 1))
-            xs = [grid.center(c)[0] for c in insides]
-            position, rotation = (sum(xs) / len(xs), 0.0, edge), 0.0
-        scale = round(len(insides) * grid.cell / gate_width, 4)
-        add(f"exit_door_{door['id']}", GATE_ASSET, position, rotation, scale)
-
     def centred_prop(instance_id, visual, rect_min, rect_max):
         asset = assets[visual["assetId"]]
         offset_x, offset_z = asset_horizontal_center(asset)
         cx = (grid.edge_x(rect_min[0]) + grid.edge_x(rect_max[0] + 1)) * 0.5 - offset_x
         cz = (grid.edge_z(rect_min[1]) + grid.edge_z(rect_max[1] + 1)) * 0.5 - offset_z
-        indoor = imin[0] <= rect_min[0] and rect_max[0] <= imax[0] and imin[1] <= rect_min[1] and rect_max[1] <= imax[1]
-        add(instance_id, visual["assetId"], (cx, floor_height if indoor else 0.0, cz), 0.0, 1.0, True, visual["materialId"])
+        add(instance_id, visual["assetId"], (cx, 0.0, cz), 0.0, 1.0, True, visual["materialId"])
 
     for deposit in scenario["deposits"]:
         c = tuple(deposit["cell"])

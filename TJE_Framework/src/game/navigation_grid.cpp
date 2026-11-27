@@ -72,6 +72,18 @@ void NavigationGrid::setZoneRect(Cell min, Cell max, Zone zone)
 	++revision;
 }
 
+void NavigationGrid::setZone(Cell cell, Zone zone)
+{
+	if (!inBounds(cell))
+		return;
+	Zone& value = zones[index(cell)];
+	if (value != zone)
+	{
+		value = zone;
+		++revision;
+	}
+}
+
 Zone NavigationGrid::getZone(Cell cell) const
 {
 	return inBounds(cell) ? zones[index(cell)] : Zone::Outside;

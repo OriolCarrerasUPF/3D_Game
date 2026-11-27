@@ -106,8 +106,9 @@ struct ResourceAmounts
 };
 
 // ---------------------------------------------------------------------------
-// Buildings (plan C2/C8). The enum only names the 13 MVP types; every value
-// (footprint, cost, slots, recipe, visuals ...) comes from buildings.json.
+// Buildings (plan C2/C8). The enum only names the 13 MVP types plus the Corridor
+// (base layout change, P05B); every value (footprint, cost, slots, recipe, visuals
+// ...) comes from buildings.json.
 // ---------------------------------------------------------------------------
 
 enum class BuildingType : std::uint8_t
@@ -124,10 +125,11 @@ enum class BuildingType : std::uint8_t
 	WaterExtractor,
 	SolarPanel,
 	LandingPad,
-	HavenBeacon
+	HavenBeacon,
+	Corridor
 };
 
-constexpr std::size_t building_type_count = 13;
+constexpr std::size_t building_type_count = 14;
 
 enum class ConstructionState : std::uint8_t
 {
@@ -184,7 +186,7 @@ enum class CommandKind : std::uint8_t
 	PlaceDebugObstacleAhead,   // P03 debug: block a cell ahead on a colonist's route
 	ToggleDebugObstacle,       // P03 debug: block/unblock one cell
 	ClearDebugObstacles,       // P03 debug: remove every debug obstacle
-	SetDoorOpen,               // debug until P07: open/close an Exit Door socket
+	SetDoorOpen,               // debug: open/close a completed Exit Door (door index)
 	AssignJob                  // P05: change a colonist's role (releases its work slot)
 };
 

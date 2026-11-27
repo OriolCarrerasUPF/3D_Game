@@ -8,6 +8,7 @@
 #include "scenario_loader.h"
 
 #include <algorithm>
+#include <limits>
 #include <cmath>
 #include <set>
 #include <stdexcept>
@@ -22,7 +23,8 @@ namespace
 
 Game* Game::instance = NULL;
 
-Game::Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path)
+Game::Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path,
+	const std::string& scene_path)
 	: window(window)
 	, window_width(window_width)
 	, window_height(window_height)
@@ -30,7 +32,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window, const std::s
 	, time(0.0f)
 	, elapsed_time(0.0f)
 	, fps(0)
-	, max_fps(60) // FPS cap: change this number (0 = uncapped)
+	, max_fps(60) // (0 = uncapped)
 	, must_exit(false)
 	, camera(nullptr)
 	, mouse_locked(false)
@@ -59,7 +61,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window, const std::s
 	// Startup order (plan C9.1): validate every JSON file and the cross-file rules
 	// before any OpenGL resource is created; then build views, then the simulation.
 	SceneParser scene_parser;
-	SceneLoadResult scene_result = scene_parser.parse("data/arkfall/scene.json", asset_catalog);
+	SceneLoadResult scene_result = scene_parser.parse(scene_path, asset_catalog);
 	if (!scene_result)
 		throw std::runtime_error(scene_result.error->describe());
 
@@ -69,7 +71,7 @@ Game::Game(int window_width, int window_height, SDL_Window* window, const std::s
 		throw std::runtime_error(scenario_result.error->describe());
 	DataLoadError blocker_error;
 	if (!ScenarioLoader::validateSceneBlockers(scenario_result.scenario, scene_result.instances,
-		"data/arkfall/scene.json", blocker_error))
+		scene_path, blocker_error))
 		throw std::runtime_error(blocker_error.describe());
 
 	ColonistCatalogLoadResult colonist_result = definitions.colonists.load("data/arkfall/colonists.json");
@@ -100,6 +102,9 @@ Game::Game(int window_width, int window_height, SDL_Window* window, const std::s
 	for (const BuildingDefinition& building : definitions.buildings.getDefinitions())
 		for (const BuildingVisualDefinition& visual : building.visuals)
 			referenced_assets.insert(visual.asset_id);
+	// P05B: corridor walls, arches and junction caps placed by the view rules (plan C5.2).
+	for (const char* piece : { base_layout::wall_asset_id, base_layout::arch_asset_id, base_layout::junction_asset_id })
+		referenced_assets.insert(piece);
 
 	// Validate all authored JSON and references before creating any OpenGL assets.
 	AssetCatalogLoadResult resource_result = asset_catalog.loadReferencedAssets(referenced_assets);
@@ -170,24 +175,27 @@ void Game::updateViewport(int logical_width, int logical_height)
 
 void Game::frameInitialView()
 {
-	// Frame the base, the deposits and the colonists (GDD 3.2: show the base and the
-	// nearest mines), computed from scenario data instead of fixed coordinates.
+	// Frame the base (its buildings), the deposits and the colonists (GDD 3.2: show the
+	// base and the nearest mines), computed from scenario data instead of fixed coordinates.
 	const ScenarioDefinition& scenario = simulation.getScenario();
 	const NavigationGrid& grid = simulation.getGrid();
 	const float cell = grid.getCellSize();
-	float min_x = grid.cellCenter(scenario.interior_min).x - cell * 0.5f;
-	float min_z = grid.cellCenter(scenario.interior_min).z - cell * 0.5f;
-	float max_x = grid.cellCenter(scenario.interior_max).x + cell * 0.5f;
-	float max_z = grid.cellCenter(scenario.interior_max).z + cell * 0.5f;
+	float min_x = std::numeric_limits<float>::max(), min_z = std::numeric_limits<float>::max();
+	float max_x = std::numeric_limits<float>::lowest(), max_z = std::numeric_limits<float>::lowest();
 	auto include = [&](Cell c) {
 		const Vector3 p = grid.cellCenter(c);
 		min_x = std::min(min_x, p.x - cell * 0.5f); max_x = std::max(max_x, p.x + cell * 0.5f);
 		min_z = std::min(min_z, p.z - cell * 0.5f); max_z = std::max(max_z, p.z + cell * 0.5f);
 		};
+	for (const BuildingRecord& building : simulation.getBuildings())
+		for (Cell c : building.footprint_cells)
+			include(c);
 	for (const DepositDefinition& deposit : scenario.deposits)
 		include(deposit.cell);
 	for (const InitialColonistDefinition& colonist : scenario.initial_colonists)
 		include(colonist.cell);
+	if (min_x > max_x)
+		include(Cell{ grid.getWidth() / 2, grid.getHeight() / 2 });
 
 	strategy_camera.setBounds(grid.getOriginX(), grid.getOriginZ(),
 		grid.getOriginX() + grid.getWidth() * cell, grid.getOriginZ() + grid.getHeight() * cell);
@@ -275,6 +283,8 @@ void Game::update(double seconds_elapsed)
 	}
 	if (ui.getSelectedBuilding() != INVALID_BUILDING && !simulation.findBuilding(ui.getSelectedBuilding()))
 		ui.clearSelection();
+	// P05B: the dome popup lists the colonists inside it; the rows are clickable.
+	ui.setOccupants(simulation.occupants(ui.getSelectedBuilding()));
 	colony_world.setSelectedColonist(ui.getSelectedColonist());
 	colony_world.setSelectedBuilding(ui.getSelectedBuilding());
 	colony_world.syncVisuals(simulation, static_cast<float>(simulation_clock.getInterpolationAlpha()));
@@ -294,7 +304,7 @@ void Game::processWorldClick()
 	pending_world_click = false;
 	if (ui.isBuildMode())
 	{
-		ui.showMessage("Nothing to place yet: building types arrive with buildings.json (P05)");
+		ui.showMessage("Nothing to place yet: paid construction and placement arrive in P07");
 		return;
 	}
 	// The nearest hit wins; a colonist standing in front of a building is preferred on a tie.
@@ -310,15 +320,6 @@ void Game::processWorldClick()
 		ui.selectBuilding(building_id);
 	else
 		ui.clearSelection();
-}
-
-bool Game::isDoorCell(Cell cell) const
-{
-	for (const ExitDoorDefinition& door : simulation.getScenario().exit_doors)
-		for (const DoorPortal& portal : door.crossings)
-			if (portal.inside == cell || portal.outside == cell)
-				return true;
-	return false;
 }
 
 void Game::updatePlacementGhost()
@@ -337,7 +338,7 @@ void Game::updatePlacementGhost()
 			ghost_cell = cell;
 			if (simulation.getGrid().isBlocked(cell))
 				ghost_status = "blocked";
-			else if (isDoorCell(cell))
+			else if (simulation.isDoorCell(cell))
 				ghost_status = "door crossing";
 			else
 				ghost_status = "free";
@@ -406,6 +407,10 @@ void Game::handleUiAction(UiAction action)
 			queueCommand(GameCommand::assignJob(ui.getSelectedColonist(), job));
 		break;
 	}
+	case UiAction::SelectOccupant:    // P05B dome popup: open the clicked occupant's popup
+		if (ui.getClickedOccupant() != INVALID_COLONIST)
+			ui.select(ui.getClickedOccupant());
+		break;
 	case UiAction::ToggleBuildMode:   // ColonyUI already switched the mode
 	case UiAction::CloseSelection:    // ColonyUI already cleared the selection
 	case UiAction::None:

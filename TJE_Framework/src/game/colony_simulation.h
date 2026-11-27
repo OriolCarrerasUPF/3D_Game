@@ -12,6 +12,11 @@
 // item inventory, operating work slots with reservation/release, nearest-job
 // selection, production from physically present workers with atomic recipes, and the
 // AssignJob role order. Needs and utilities arrive in P06, construction in P07.
+// P05B (base layout change, plan C5): there is no fixed base. A completed Corridor or
+// Exit Door turns its inside cells inside and the Exit Door registers its crossings as
+// a door; domes (interior buildings) are worked from their entrances (access cells
+// on inside cells), and a colonist present at a dome entrance is inside that dome
+// (current_dome), which the view hides and the dome popup lists.
 //
 // Tick order (P05 subset of the P06 order in the plan):
 //   1. every colonist: validate its reservation, replan after map changes, choose a
@@ -66,6 +71,9 @@ struct ColonistRecord
 
 	// P05 work: the reserved slot and the access cell walked to / worked at.
 	WorkReservation reservation;
+	// P05B: the dome whose entrance the colonist is present at (working there; P06 adds
+	// refilling and idle waiting), or INVALID_BUILDING. The view hides such colonists.
+	BuildingId current_dome = INVALID_BUILDING;
 	Cell work_cell;
 	float job_retry_timer = 0.0f;     // time until an idle colonist looks for work again
 	std::uint64_t evaluated_work_revision = std::numeric_limits<std::uint64_t>::max();
@@ -104,11 +112,13 @@ struct BuildingRecord
 
 	Cell origin;                          // minimum corner of the rotated footprint
 	int quarter_turns = 0;
-	int width = 0;                        // rotated size in cells (0 for an Exit Door)
+	int width = 0;                        // rotated size in cells
 	int height = 0;
-	std::vector<Cell> footprint_cells;
-	std::vector<Cell> access_cells;       // Exit Door: its crossing cells
-	std::optional<std::size_t> door_index; // Exit Door socket
+	std::vector<Cell> footprint_cells;    // blocked, except for corridors and airlocks
+	std::vector<Cell> access_cells;       // domes: entrance candidates
+	std::vector<Cell> inside_cells;       // become inside on completion (corridor cell, airlock chamber)
+	std::vector<DoorPortal> crossings;    // Exit Door crossings (world cells)
+	std::optional<std::size_t> door_index; // NavigationGrid door of a completed Exit Door
 	std::optional<std::size_t> deposit_index; // mines: the deposit inside the footprint
 
 	std::vector<ColonistId> slots;        // operating slot owners (INVALID_COLONIST = free)
@@ -120,19 +130,22 @@ struct BuildingRecord
 	bool isComplete() const { return construction == ConstructionState::Complete; }
 };
 
-// Result of the shared placement rules (plan C5). P05 checks bounds, zone, overlaps,
-// door and spawn cells, deposits and access cells; P07 adds cost and connectivity.
+// Result of the shared placement rules (plan C5). P05/P05B check bounds, overlaps,
+// spawn cells, deposits, access cells and the base network (corridor adjacency, dome
+// entrance on the network, exterior buildings off it); P07 adds cost and the
+// enclosure/connectivity checks.
 struct PlacementResult
 {
 	bool valid = false;
-	std::string code;      // stable: "ok", "out_of_bounds", "wrong_zone", "occupied", ...
+	std::string code;      // stable: "ok", "out_of_bounds", "needs_network", "occupied", ...
 	std::string reason;    // user-facing
 	int width = 0;
 	int height = 0;
 	std::vector<Cell> footprint_cells;
 	std::vector<Cell> access_cells;
+	std::vector<Cell> inside_cells;
+	std::vector<DoorPortal> crossings;
 	std::optional<std::size_t> deposit_index;
-	std::optional<std::size_t> door_index;
 };
 
 class ColonySimulation
@@ -174,11 +187,22 @@ public:
 	// "Iron Mine #3"
 	std::string describeBuilding(BuildingId id) const;
 
-	// Shared placement rules for a footprint building with its origin (minimum corner of
-	// the rotated footprint) and quarter turns. Pure: nothing is changed.
+	// Shared placement rules for any building with its origin (minimum corner of the
+	// rotated footprint) and quarter turns. Pure: nothing is changed.
 	PlacementResult validatePlacement(BuildingType type, Cell origin, int quarter_turns) const;
-	// Exit Door on a door socket (scenario exitDoors index).
-	PlacementResult validateDoorPlacement(std::size_t door_index) const;
+
+	// ---- P05B: base network and domes ----------------------------------------------
+	// A cell that a Corridor or an Exit Door (complete or planned) turns inside.
+	bool isNetworkCell(Cell cell) const;
+	// The building whose footprint covers the cell, or nullptr.
+	const BuildingRecord* buildingAt(Cell cell) const;
+	// True when the cell is the outside or inside cell of a registered door crossing.
+	bool isDoorCell(Cell cell) const;
+	// Access cells usable for work and services: every access cell of an exterior
+	// building; for a dome only its entrances (access candidates on inside cells).
+	std::vector<Cell> usableAccessCells(const BuildingRecord& building) const;
+	// Living colonists present inside the dome (current_dome), in colonist-ID order.
+	std::vector<ColonistId> occupants(BuildingId dome) const;
 
 	// Changes a colonist's role, releasing its work slot first (plan C6.1).
 	bool assignJob(ColonistId id, Job job, std::string& reason);
@@ -210,7 +234,8 @@ private:
 	void advanceAlongRoute(ColonistRecord& colonist, float distance_budget);
 	void onRouteFinished(ColonistRecord& colonist);
 	bool isCellReservedByColonist(Cell cell) const;
-	bool isDoorCell(Cell cell) const;
+	bool isUsableAccess(const BuildingRecord& building, Cell cell) const;
+	void updatePresence(ColonistRecord& colonist);
 
 	// Work slots (plan C6/C6.1).
 	bool isWorkplaceFor(const BuildingRecord& building, Job job) const;

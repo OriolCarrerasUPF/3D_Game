@@ -3,11 +3,18 @@
 // Building definitions from data/arkfall/buildings.json (schema 1), headless.
 //
 // buildings.json is the ONLY source of building values (plan C8/F3): footprint, cost,
-// construction and operating roles/slots, access offsets, services, utilities,
-// storage, recipe and visual composition. C++ only names the 13 types. The loader is
-// strict: every key is required (absent features are explicit null / 0 / []), unknown
-// keys, enums, resource names, roles and deposits are errors, and each of the 13
-// types must appear exactly once. Errors report file + JSON pointer + message.
+// construction and operating roles/slots, access offsets, cells that become inside,
+// door crossings, services, utilities, storage, recipe and visual composition. C++
+// only names the 14 types (13 MVP types + Corridor). The loader is strict: every key
+// is required (absent features are explicit null / 0 / []), unknown keys, enums,
+// resource names, roles and deposits are errors, and each type must appear exactly
+// once. Errors report file + JSON pointer + message.
+//
+// Base layout (P05B, plan C5): `interior` buildings are domes (blocked footprint,
+// access offsets = entrance candidates), `exterior` buildings stand outside, and the
+// `network` buildings build the inside: the Corridor (placement `corridor`, one walkable
+// cell) and the Exit Door (placement `airlock`, walkable footprint with an outside
+// apron, inside chamber cells and door crossings).
 //
 // footprint:: holds the single quarter-turn transform shared by placement validation,
 // the placement preview (P07) and the building views (plan C5).
@@ -24,8 +31,10 @@
 
 class AssetCatalog;
 
-enum class BuildingZone : std::uint8_t { Interior, Exterior, Boundary };
-enum class PlacementKind : std::uint8_t { Footprint, DoorSocket };
+enum class BuildingZone : std::uint8_t { Interior, Exterior, Network };
+// Footprint: blocked cells (domes, exterior buildings). Airlock / Corridor: walkable
+// footprint whose insideOffsets become inside when the building completes.
+enum class PlacementKind : std::uint8_t { Footprint, Airlock, Corridor };
 enum class ServiceType : std::uint8_t { Eat, Drink };
 
 struct RecipeDefinition
@@ -52,8 +61,10 @@ struct BuildingDefinition
 	std::string label;                 // UI name, e.g. "Iron Mine"
 	BuildingZone zone = BuildingZone::Interior;
 	PlacementKind placement = PlacementKind::Footprint;
-	int footprint_width = 0;           // cells at 0 deg (0 for door sockets)
+	int footprint_width = 0;           // cells at 0 deg
 	int footprint_height = 0;
+	std::vector<Cell> inside_offsets;  // footprint cells that become inside on completion (0 deg)
+	std::vector<DoorPortal> crossings; // Exit Door crossings, footprint offsets at 0 deg
 	std::optional<DepositType> required_deposit;
 	ResourceAmounts cost;
 
@@ -65,7 +76,7 @@ struct BuildingDefinition
 	Job operation_role = Job::Miner;
 	int operation_slots = 0;
 
-	std::vector<Cell> access_offsets;  // relative to the footprint origin at 0 deg
+	std::vector<Cell> access_offsets;  // relative to the footprint origin at 0 deg (domes: entrance candidates)
 	std::vector<ServiceType> services;
 	float power_demand = 0.0f;
 	float power_output = 0.0f;
@@ -75,6 +86,10 @@ struct BuildingDefinition
 	int storage_capacity = 0;          // item units added when complete
 	std::optional<RecipeDefinition> recipe;
 	std::vector<BuildingVisualDefinition> visuals;
+
+	// Corridors and the Exit Door: colonists walk on the footprint, nothing is blocked.
+	bool hasWalkableFootprint() const { return placement != PlacementKind::Footprint; }
+	bool isDome() const { return zone == BuildingZone::Interior; }
 
 	bool offersService(ServiceType service) const
 	{

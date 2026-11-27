@@ -1,19 +1,6 @@
 {
   "schemaVersion": 1,
   "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32.0, -32.0]},
-  "base": {
-    "interior": { "min": [24, 24], "max": [39, 39] },
-    "exitDoors": [
-      {
-        "id": "west_door",
-        "openAtStart": true,
-        "crossings": [
-          { "outside": [23, 31], "inside": [24, 31] },
-          { "outside": [23, 32], "inside": [24, 32] }
-        ]
-      }
-    ]
-  },
   "deposits": [
     {"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
     {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}
@@ -33,8 +20,10 @@
   "cargoCapacity": 100,
   "initialBuildings": [
     {"type": "iron_mine", "origin": [8, 12], "quarterTurns": 0},
-    {"type": "storage", "origin": [30, 26], "quarterTurns": 0},
-    {"type": "storage", "origin": [34, 26], "quarterTurns": 0},
-    {"type": "iron_processor", "origin": [28, 33], "quarterTurns": 0}
+    {"type": "exit_door", "origin": [22, 30], "quarterTurns": 3},
+    {"type": "corridor", "from": [25, 30], "to": [34, 31]},
+    {"type": "storage", "origin": [26, 32], "quarterTurns": 0},
+    {"type": "storage", "origin": [30, 32], "quarterTurns": 0},
+    {"type": "iron_processor", "origin": [33, 32], "quarterTurns": 1}
   ]
 }

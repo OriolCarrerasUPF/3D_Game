@@ -1,7 +1,7 @@
 // Validates the JSON files actually shipped in data/arkfall (run from TJE_Framework/).
-// These are regression checks for the pre-P03 fixes: walls are visual only, the gate
-// matches its door crossings, no static colonist, and every navigation blocker in
-// scene.json matches a blocker cell in scenario.json (and vice versa).
+// Since P05B the scene holds only terrain and deposits (doors, corridors and domes are
+// runtime building views); every navigation blocker in scene.json matches a blocker
+// cell in scenario.json (and vice versa), and every dev scenario starts.
 
 #include "test_harness.h"
 
@@ -76,28 +76,25 @@ TEST_CASE("shipped data: catalog, materials and scene load")
 		return;
 	CHECK(data.scene.instances.size() > 4096u);
 	const AssetDefinition* terrain = data.catalog.findAsset("terrain_tile");
-	const AssetDefinition* floor = data.catalog.findAsset("interior_floor");
+	// The corridor floor is the walkable 0.1 m surface of the base (plan C5.2).
+	const AssetDefinition* floor = data.catalog.findAsset("corridor_floor");
 	CHECK(terrain && terrain->walkable_surface);
 	CHECK(floor && floor->walkable_surface);
 	CHECK(floor && std::fabs(floor->picking_bounds_max.y - 0.1f) < 1e-4f);
 }
 
-TEST_CASE("shipped data: wall pieces are visual only and colonists are not static")
+TEST_CASE("shipped data: the scene has no fixed base and no static colonists")
 {
 	ShippedData& data = shipped();
 	if (!data.ok)
 		return;
-	int walls = 0;
 	for (const StaticSceneInstance& instance : data.scene.instances)
 	{
-		if (instance.asset_id == "base_boundary")
-		{
-			++walls;
-			CHECK(!instance.blocks_navigation);
-		}
 		CHECK(instance.asset_id != "astronaut");
+		CHECK(instance.asset_id != "base_boundary" && instance.asset_id != "interior_floor" && instance.asset_id != "exit_gate");
 	}
-	CHECK(walls > 0);
+	CHECK(!data.scenario.contains("base"));
+	CHECK(!data.scenario.contains("debugRoute"));
 }
 
 TEST_CASE("shipped data: every scene blocker matches a scenario blocker")
@@ -132,50 +129,36 @@ TEST_CASE("shipped data: every scene blocker matches a scenario blocker")
 	CHECK(blockers_with_visual == all_blockers);
 }
 
-TEST_CASE("shipped data: exit gate width matches its door crossings")
+TEST_CASE("shipped data: the base modules fit the astronaut and the grid (plan C5.2)")
 {
 	ShippedData& data = shipped();
 	if (!data.ok)
 		return;
-	const AssetDefinition* gate = data.catalog.findAsset("exit_gate");
-	CHECK(gate != nullptr);
-	if (!gate)
+	const AssetDefinition* astronaut = data.catalog.findAsset("astronaut");
+	const AssetDefinition* airlock = data.catalog.findAsset("airlock");
+	const AssetDefinition* wall = data.catalog.findAsset("corridor_wall_frame");
+	const AssetDefinition* arch = data.catalog.findAsset("corridor_arch");
+	const AssetDefinition* junction = data.catalog.findAsset("corridor_junction");
+	CHECK(astronaut && airlock && wall && arch && junction);
+	if (!astronaut || !airlock || !wall || !arch || !junction)
 		return;
-	const float gate_width_at_scale_1 = gate->picking_bounds_max.x - gate->picking_bounds_min.x;
-	for (const Json& door : data.scenario["base"]["exitDoors"])
+	const float astronaut_width = astronaut->picking_bounds_max.x - astronaut->picking_bounds_min.x;
+	const float astronaut_height = astronaut->picking_bounds_max.y - astronaut->picking_bounds_min.y;
+	// A 2-cell corridor: 2 m minus two wall thicknesses is wider than the astronaut, and
+	// the rail is higher than the astronaut standing on the 0.1 m floor.
+	const float wall_thickness = wall->picking_bounds_max.x - wall->picking_bounds_min.x;
+	CHECK(2.0f - 2.0f * wall_thickness > astronaut_width + 0.4f);
+	CHECK(wall->picking_bounds_max.y > astronaut_height + 0.1f + 0.4f);
+	CHECK_NEAR(arch->picking_bounds_max.x - arch->picking_bounds_min.x, 2.0, 1e-3);
+	// The airlock fills the 2 x 3 Exit Door footprint.
+	GameDefinitions definitions;
+	CHECK(definitions.buildings.load("data/arkfall/buildings.json"));
+	const BuildingDefinition* door = definitions.buildings.find(BuildingType::ExitDoor);
+	CHECK(door != nullptr);
+	if (door)
 	{
-		const std::string id = "exit_door_" + door["id"].get<std::string>();
-		const StaticSceneInstance* visual = nullptr;
-		for (const StaticSceneInstance& instance : data.scene.instances)
-			if (instance.id == id)
-				visual = &instance;
-		CHECK(visual != nullptr);
-		if (!visual)
-			continue;
-		const float door_width = static_cast<float>(door["crossings"].size()) * data.scenario["grid"]["cellSize"].get<float>();
-		CHECK_NEAR(visual->scale.x * gate_width_at_scale_1, door_width, 1e-3);
-
-		// No wall piece may remain on a crossing edge (the gap is as wide as the door).
-		for (const Json& crossing : door["crossings"])
-		{
-			const GridKey inside{ crossing["inside"][0].get<int>(), crossing["inside"][1].get<int>() };
-			const GridKey outside{ crossing["outside"][0].get<int>(), crossing["outside"][1].get<int>() };
-			// Wall rotation that puts the slab on the inside cell's edge toward `outside`
-			// (same convention as tools/generate_arkfall_scene.py).
-			float edge_rotation = 0.0f;                                   // west
-			if (outside.first > inside.first) edge_rotation = 180.0f;     // east
-			else if (outside.second < inside.second) edge_rotation = 90.0f;  // south
-			else if (outside.second > inside.second) edge_rotation = -90.0f; // north
-			for (const StaticSceneInstance& instance : data.scene.instances)
-			{
-				if (instance.asset_id != "base_boundary")
-					continue;
-				const GridKey wall_cell = worldToCell(data.scenario, instance.position.x, instance.position.z);
-				const bool on_crossing_edge = wall_cell == inside &&
-					std::fabs(instance.rotation_y_degrees - edge_rotation) < 0.01f;
-				CHECK(!on_crossing_edge);
-			}
-		}
+		CHECK_NEAR(airlock->picking_bounds_max.x - airlock->picking_bounds_min.x, door->footprint_width, 1e-3);
+		CHECK(airlock->picking_bounds_max.z - airlock->picking_bounds_min.z <= door->footprint_height + 1e-3f);
 	}
 }
 
@@ -214,27 +197,31 @@ TEST_CASE("shipped data: P05 start state, name pool and building visuals")
 	CHECK(definitions.buildings.validateVisuals(data.catalog));
 }
 
-TEST_CASE("shipped data: dev/production.json starts on the shipped map")
+TEST_CASE("shipped data: every dev scenario starts on the shipped map")
 {
 	ShippedData& data = shipped();
 	if (!data.ok)
 		return;
-	const ScenarioLoadResult dev = ScenarioLoader().load("data/arkfall/dev/production.json");
-	CHECK(dev);
-	if (!dev)
-	{
-		test::fail(__FILE__, __LINE__, dev.error->describe());
-		return;
-	}
-	// Dev scenarios reuse scene.json, so their blockers must agree with it.
-	DataLoadError error;
-	CHECK(ScenarioLoader::validateSceneBlockers(dev.scenario, data.scene.instances, "data/arkfall/scene.json", error));
 	GameDefinitions definitions;
 	CHECK(definitions.colonists.load("data/arkfall/colonists.json"));
 	CHECK(definitions.buildings.load("data/arkfall/buildings.json"));
-	ColonySimulation simulation;
-	std::string init_error;
-	CHECK(simulation.initialize(dev.scenario, definitions, init_error));
-	if (!init_error.empty())
-		test::fail(__FILE__, __LINE__, init_error);
+	for (const char* path : { "data/arkfall/dev/production.json", "data/arkfall/dev/p03_navigation.json",
+			"data/arkfall/dev/base_layout.json" })
+	{
+		const ScenarioLoadResult dev = ScenarioLoader().load(path);
+		CHECK(dev);
+		if (!dev)
+		{
+			test::fail(__FILE__, __LINE__, dev.error->describe());
+			continue;
+		}
+		// Dev scenarios reuse scene.json, so their blockers must agree with it.
+		DataLoadError error;
+		CHECK(ScenarioLoader::validateSceneBlockers(dev.scenario, data.scene.instances, "data/arkfall/scene.json", error));
+		ColonySimulation simulation;
+		std::string init_error;
+		CHECK(simulation.initialize(dev.scenario, definitions, init_error));
+		if (!init_error.empty())
+			test::fail(__FILE__, __LINE__, std::string(path) + ": " + init_error);
+	}
 }

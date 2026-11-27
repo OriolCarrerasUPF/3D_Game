@@ -48,7 +48,7 @@ namespace
 	}
 }
 
-TEST_CASE("buildings: shipped buildings.json has the 13 MVP types with the C8 values")
+TEST_CASE("buildings: shipped buildings.json has the 13 MVP types plus the Corridor with the C8 values")
 {
 	BuildingCatalog catalog;
 	const BuildingCatalogLoadResult result = catalog.load("data/arkfall/buildings.json");
@@ -83,8 +83,21 @@ TEST_CASE("buildings: shipped buildings.json has the 13 MVP types with the C8 va
 	CHECK_EQ(processor->recipe->inputs[ResourceType::IronOre], 1);
 	CHECK_EQ(processor->recipe->outputs[ResourceType::Steel], 1);
 	CHECK_EQ(processor->operation_slots, 1);
-	CHECK(door->placement == PlacementKind::DoorSocket && door->zone == BuildingZone::Boundary);
-	CHECK(door->access_offsets.empty());
+	// P05B: the Exit Door is a 2 x 3 airlock; its two chamber rows become inside and the
+	// two apron-to-chamber edges are its crossings.
+	CHECK(door->placement == PlacementKind::Airlock && door->zone == BuildingZone::Network);
+	CHECK(door->hasWalkableFootprint());
+	CHECK_EQ(door->footprint_width, 2);
+	CHECK_EQ(door->footprint_height, 3);
+	CHECK_EQ(door->inside_offsets.size(), static_cast<std::size_t>(4));
+	CHECK_EQ(door->crossings.size(), static_cast<std::size_t>(2));
+	CHECK(!door->access_offsets.empty());
+	const BuildingDefinition* corridor = catalog.find(BuildingType::Corridor);
+	CHECK(corridor && corridor->placement == PlacementKind::Corridor && corridor->zone == BuildingZone::Network);
+	CHECK(corridor && corridor->footprint_width == 1 && corridor->inside_offsets.size() == 1u && corridor->crossings.empty());
+	CHECK(corridor && corridor->cost[ResourceType::Steel] == 1);
+	CHECK(storage->isDome() && storage->inside_offsets.empty() && storage->crossings.empty());
+	CHECK(!mine->isDome() && !mine->hasWalkableFootprint());
 	CHECK_EQ(beacon->cost[ResourceType::Aurite], 300);
 	CHECK_NEAR(beacon->power_demand, 0.0, 1e-6);
 	CHECK_EQ(beacon->footprint_width, 4);
@@ -169,7 +182,7 @@ TEST_CASE("buildings: rejects a missing type, duplicate and unknown ids")
 
 	doc = shippedDocument();
 	doc["buildings"].push_back(doc["buildings"][0]);
-	expectError(doc, "/buildings/13/id", "duplicate id");
+	expectError(doc, "/buildings/14/id", "duplicate id");
 
 	doc = shippedDocument();
 	doc["buildings"][indexOf(doc, "storage")]["id"] = "silo";
@@ -226,8 +239,8 @@ TEST_CASE("buildings: rejects invalid footprints and access offsets")
 	expectError(doc, "/footprint", "footprint building without footprint");
 
 	doc = shippedDocument();
-	doc["buildings"][indexOf(doc, "exit_door")]["footprint"] = Json::array({ 1, 1 });
-	expectError(doc, "/footprint", "door socket with a footprint");
+	doc["buildings"][indexOf(doc, "exit_door")]["footprint"] = nullptr;
+	expectError(doc, "/footprint", "airlock without footprint");
 
 	doc = shippedDocument();
 	doc["buildings"][indexOf(doc, "storage")]["accessOffsets"][0] = Json::array({ 1, 1 });
@@ -275,4 +288,48 @@ TEST_CASE("buildings: rejects recipes without workers and unknown visual assets"
 	CHECK(!visuals);
 	if (!visuals)
 		CHECK(visuals.error->json_pointer.find("/buildings/storage/visuals/0/assetId") != std::string::npos);
+}
+
+TEST_CASE("buildings: rejects bad network buildings (zones, inside cells, crossings)")
+{
+	Json doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "storage")]["zone"] = "network";
+	expectError(doc, "/zone", "footprint building in the network zone");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "corridor")]["zone"] = "interior";
+	expectError(doc, "/zone", "corridor outside the network zone");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "corridor")]["footprint"] = Json::array({ 2, 1 });
+	expectError(doc, "/footprint", "corridor wider than one cell");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "storage")]["insideOffsets"] = Json::array({ Json::array({ 0, 0 }) });
+	expectError(doc, "/insideOffsets", "dome turning cells inside");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "exit_door")]["insideOffsets"].push_back(Json::array({ 0, 0 }));
+	doc["buildings"][indexOf(doc, "exit_door")]["insideOffsets"].push_back(Json::array({ 1, 0 }));
+	expectError(doc, "/insideOffsets", "airlock without an outside apron");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "exit_door")]["insideOffsets"][0] = Json::array({ 5, 5 });
+	expectError(doc, "/insideOffsets/0", "inside offset outside the footprint");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "exit_door")]["crossings"] = Json::array();
+	expectError(doc, "/crossings", "airlock without crossings");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "exit_door")]["crossings"][0]["inside"] = Json::array({ 0, 0 });
+	expectError(doc, "/crossings/0", "crossing inside cell not inside");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "exit_door")]["crossings"][0]["inside"] = Json::array({ 1, 2 });
+	expectError(doc, "/crossings/0", "crossing cells not neighbours");
+
+	doc = shippedDocument();
+	doc["buildings"][indexOf(doc, "storage")]["crossings"] = doc["buildings"][indexOf(doc, "exit_door")]["crossings"];
+	expectError(doc, "/crossings", "crossings on a dome");
 }

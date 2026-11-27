@@ -171,6 +171,7 @@ set(ARKFALL_HEADLESS_SOURCES
     ${DIR_SOURCES}/game/colonist_catalog.cpp
     ${DIR_SOURCES}/game/building_catalog.cpp
     ${DIR_SOURCES}/game/colony_simulation.cpp
+    ${DIR_SOURCES}/game/base_layout.cpp
     ${DIR_SOURCES}/game/strategy_camera.cpp
     ${DIR_SOURCES}/game/picking.cpp
     ${DIR_SOURCES}/game/colony_ui.cpp

@@ -53,6 +53,9 @@ public:
 	bool isWalkable(Cell cell) const { return inBounds(cell) && !isBlocked(cell); }
 	// Marks the inclusive rectangle [min, max] with `zone`.
 	void setZoneRect(Cell min, Cell max, Zone zone);
+	// Marks one cell (P05B: completed Corridors and Exit Door chambers become inside).
+	// Bumps the revision only when the zone changes.
+	void setZone(Cell cell, Zone zone);
 	Zone getZone(Cell cell) const;
 
 	// ---- Exit Doors --------------------------------------------------------

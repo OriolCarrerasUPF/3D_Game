@@ -321,6 +321,81 @@
       },
       "walkableSurface": false,
       "loadFailureIsFatal": true
+    },
+    {
+      "id": "airlock",
+      "modelPath": "models/airlock.obj",
+      "materialPath": "models/airlock.mtl",
+      "materialId": "architecture",
+      "scale": [ 1.0, 1.0, 1.0 ],
+      "pivotOffset": [ 0.0, 0.0, 0.0 ],
+      "forwardAxis": "+Z",
+      "pickingBounds": {
+        "min": [ -1.0, 0.0, -1.45 ],
+        "max": [ 1.0, 3.189438, 1.5 ]
+      },
+      "walkableSurface": false,
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "corridor_floor",
+      "modelPath": "models/corridor_floor.obj",
+      "materialPath": "models/corridor_floor.mtl",
+      "materialId": "architecture",
+      "scale": [ 1.0, 1.0, 1.0 ],
+      "pivotOffset": [ 0.0, 0.0, 0.0 ],
+      "forwardAxis": "+Z",
+      "pickingBounds": {
+        "min": [ -0.5, 0.0, -0.5 ],
+        "max": [ 0.5, 0.1, 0.5 ]
+      },
+      "walkableSurface": true,
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "corridor_wall_frame",
+      "modelPath": "models/corridor_wall_frame.obj",
+      "materialPath": "models/corridor_wall_frame.mtl",
+      "materialId": "architecture",
+      "scale": [ 1.0, 1.0, 1.0 ],
+      "pivotOffset": [ 0.0, 0.0, 0.0 ],
+      "forwardAxis": "+Z",
+      "pickingBounds": {
+        "min": [ -0.5, 0.0, -0.5 ],
+        "max": [ -0.38, 2.42, 0.5 ]
+      },
+      "walkableSurface": false,
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "corridor_arch",
+      "modelPath": "models/corridor_arch.obj",
+      "materialPath": "models/corridor_arch.mtl",
+      "materialId": "architecture",
+      "scale": [ 1.0, 1.0, 1.0 ],
+      "pivotOffset": [ 0.0, 0.0, 0.0 ],
+      "forwardAxis": "+Z",
+      "pickingBounds": {
+        "min": [ -1.0, 2.3, -0.04 ],
+        "max": [ 1.0, 2.92, 0.04 ]
+      },
+      "walkableSurface": false,
+      "loadFailureIsFatal": true
+    },
+    {
+      "id": "corridor_junction",
+      "modelPath": "models/corridor_junction.obj",
+      "materialPath": "models/corridor_junction.mtl",
+      "materialId": "architecture",
+      "scale": [ 1.0, 1.0, 1.0 ],
+      "pivotOffset": [ 0.0, 0.0, 0.0 ],
+      "forwardAxis": "+Z",
+      "pickingBounds": {
+        "min": [ -1.06, 0.0, -1.06 ],
+        "max": [ 1.06, 3.12, 1.06 ]
+      },
+      "walkableSurface": false,
+      "loadFailureIsFatal": true
     }
   ]
 }

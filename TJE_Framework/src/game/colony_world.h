@@ -1,6 +1,7 @@
 #pragma once
 
 #include "asset_catalog.h"
+#include "base_layout.h"
 #include "colony_simulation.h"
 #include "game_definitions.h"
 #include "picking.h"
@@ -109,15 +110,17 @@ public:
 	// Views sharing asset/material are drawn as one instanced group.
 	DynamicViewId createDynamicView(const std::string& asset_id, const std::string& material_id, DataLoadError& error);
 	// Gameplay position (y is the planar gameplay height, normally 0) and yaw in radians
-	// using the world_transform convention. The view is drawn on the visual surface height.
-	// `scale` multiplies the asset's own scale (building visuals, door width).
-	bool setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale = 1.0f);
+	// using the world_transform convention. With on_visual_surface the view is drawn on the
+	// visual surface height (colonists); buildings and corridor pieces stand on y = 0.
+	// `scale` multiplies the asset's own scale (building visuals).
+	bool setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale = 1.0f,
+		bool on_visual_surface = true);
 	bool destroyDynamicView(DynamicViewId id);
 	void clearDynamicViews();
 	bool hasDynamicView(DynamicViewId id) const { return dynamic_records.count(id) != 0; }
 	std::size_t getDynamicViewCount() const { return dynamic_records.size(); }
 
-	// Visual-only height of walkable static surfaces (terrain = 0, interior floor = 0.1).
+	// Visual-only height of walkable surfaces (terrain = 0; corridor and airlock floors = 0.1).
 	float getVisualGroundHeight(float x, float z) const { return surface_heights.heightAt(x, z); }
 
 	// ---- Overlay layers -------------------------------------------------------------
@@ -180,6 +183,10 @@ private:
 
 	void syncColonists(const ColonySimulation& simulation, float alpha);
 	void syncBuildings(const ColonySimulation& simulation);
+	// P05B: corridor walls, arches and junction caps (plan C5.2), rebuilt when the grid
+	// revision changes, plus the passage-axis offsets for colonists.
+	void syncCorridorPieces(const ColonySimulation& simulation);
+	float baseFloorHeight() const;
 	void updateBuildingSelectionOverlay(const ColonySimulation& simulation);
 	void rebuildNavigationOverlay(const NavigationGrid& grid);
 	void updateRouteOverlay(const ColonySimulation& simulation, float alpha);
@@ -193,7 +200,11 @@ private:
 	const GameDefinitions* definitions;
 	std::vector<std::unique_ptr<EntityMesh>> static_views;
 	std::size_t instance_count = 0;
-	SurfaceHeightMap surface_heights;
+	SurfaceHeightMap surface_heights;          // static scene + corridor/airlock floors
+	SurfaceHeightMap static_surface_heights;   // static scene only (restart)
+	std::vector<DynamicViewId> corridor_piece_views;
+	std::uint64_t corridor_revision = std::numeric_limits<std::uint64_t>::max();
+	base_layout::OffsetMap passage_offsets;
 
 	std::map<std::pair<std::string, std::string>, DynamicGroup> dynamic_groups;
 	std::unordered_map<DynamicViewId, DynamicRecord> dynamic_records;

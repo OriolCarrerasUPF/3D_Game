@@ -8,7 +8,7 @@ namespace
 	constexpr float button_gap = 6.0f;
 	constexpr float bar_padding = 8.0f;
 	constexpr float popup_width = 300.0f;
-	constexpr float popup_height = 290.0f;
+	constexpr float popup_height = 320.0f;
 	constexpr float job_button_height = 24.0f;
 	constexpr float popup_margin = 10.0f;
 	constexpr float close_size = 22.0f;
@@ -93,6 +93,38 @@ bool ColonyUI::isButtonVisible(UiButton button) const
 	return static_cast<int>(button) < static_cast<int>(UiButton::Count);
 }
 
+void ColonyUI::setOccupants(const std::vector<ColonistId>& ids)
+{
+	if (selected_building == INVALID_BUILDING)
+	{
+		occupants.clear();
+		return;
+	}
+	occupants = ids;
+}
+
+int ColonyUI::getVisibleOccupantRows() const
+{
+	if (selected_building == INVALID_BUILDING)
+		return 0;
+	return std::min(static_cast<int>(occupants.size()), max_occupant_rows);
+}
+
+UiRect ColonyUI::getOccupantRowRect(int row) const
+{
+	// Rows sit at the bottom of the building popup, below the building details.
+	const float rows_top = popup.y + popup.h - 10.0f - max_occupant_rows * occupant_row_height;
+	return UiRect{ popup.x + 12.0f, rows_top + row * occupant_row_height, popup.w - 24.0f, occupant_row_height };
+}
+
+int ColonyUI::occupantRowAt(float x, float y) const
+{
+	for (int row = 0; row < getVisibleOccupantRows(); ++row)
+		if (getOccupantRowRect(row).contains(x, y))
+			return row;
+	return -1;
+}
+
 UiButton ColonyUI::buttonAt(float x, float y) const
 {
 	for (int i = 0; i < static_cast<int>(UiButton::Count); ++i)
@@ -115,6 +147,7 @@ UiPointerResult ColonyUI::handlePointer(const PointerEvent& event)
 {
 	UiPointerResult result;
 	hovered = buttonAt(event.x, event.y);
+	hovered_row = hovered == UiButton::None ? occupantRowAt(event.x, event.y) : -1;
 	const bool over_ui = isPointerOverUi(event.x, event.y);
 
 	if (event.type == PointerType::Move)
@@ -138,6 +171,12 @@ UiPointerResult ColonyUI::handlePointer(const PointerEvent& event)
 			capture = Capture::Button;
 			result.consumed = true;
 		}
+		else if (hovered_row >= 0)
+		{
+			pressed_row = hovered_row;
+			capture = Capture::OccupantRow;
+			result.consumed = true;
+		}
 		else if (over_ui)
 		{
 			capture = Capture::Panel;
@@ -154,10 +193,20 @@ UiPointerResult ColonyUI::handlePointer(const PointerEvent& event)
 	// Left button up.
 	const Capture previous_capture = capture;
 	const UiButton previous_pressed = pressed;
+	const int previous_row = pressed_row;
 	capture = Capture::None;
 	pressed = UiButton::None;
+	pressed_row = -1;
 	switch (previous_capture)
 	{
+	case Capture::OccupantRow:
+		result.consumed = true;
+		if (hovered_row == previous_row && previous_row >= 0 && previous_row < static_cast<int>(occupants.size()))
+		{
+			clicked_occupant = occupants[static_cast<std::size_t>(previous_row)];
+			result.action = UiAction::SelectOccupant;
+		}
+		return result;
 	case Capture::Button:
 		result.consumed = true;
 		if (hovered == previous_pressed)

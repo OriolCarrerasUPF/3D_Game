@@ -40,7 +40,8 @@ enum class UiAction : std::uint8_t
 	CloseSelection,
 	AssignEngineer,   // P05 colonist popup: role buttons (Game queues GameCommand::assignJob)
 	AssignMiner,
-	AssignFarmer
+	AssignFarmer,
+	SelectOccupant    // P05B dome popup: a row of the occupant list (getClickedOccupant)
 };
 
 enum class PointerType : std::uint8_t { Move, Down, Up };
@@ -90,9 +91,21 @@ public:
 
 	// Selection (IDs only; the popup reads the record from the simulation). A colonist and
 	// a building are never selected at the same time.
-	void select(ColonistId id) { selected_colonist = id; selected_building = INVALID_BUILDING; }
+	void select(ColonistId id) { selected_colonist = id; selected_building = INVALID_BUILDING; occupants.clear(); }
 	void selectBuilding(BuildingId id) { selected_building = id; selected_colonist = INVALID_COLONIST; }
-	void clearSelection() { selected_colonist = INVALID_COLONIST; selected_building = INVALID_BUILDING; }
+	void clearSelection() { selected_colonist = INVALID_COLONIST; selected_building = INVALID_BUILDING; occupants.clear(); }
+
+	// P05B: colonists inside the selected dome (Game refreshes this every frame). The
+	// first max_occupant_rows are clickable rows at the bottom of the building popup; a
+	// click returns UiAction::SelectOccupant and getClickedOccupant() names the colonist.
+	static constexpr int max_occupant_rows = 4;
+	static constexpr float occupant_row_height = 16.0f;
+	void setOccupants(const std::vector<ColonistId>& ids);
+	const std::vector<ColonistId>& getOccupants() const { return occupants; }
+	int getVisibleOccupantRows() const;
+	UiRect getOccupantRowRect(int row) const;
+	int getHoveredOccupantRow() const { return hovered_row; }
+	ColonistId getClickedOccupant() const { return clicked_occupant; }
 	ColonistId getSelectedColonist() const { return selected_colonist; }
 	BuildingId getSelectedBuilding() const { return selected_building; }
 
@@ -139,9 +152,10 @@ public:
 	static const std::vector<std::string>& requiredMaterialIds();
 
 private:
-	enum class Capture : std::uint8_t { None, Button, Panel, World };
+	enum class Capture : std::uint8_t { None, Button, OccupantRow, Panel, World };
 
 	UiButton buttonAt(float x, float y) const;
+	int occupantRowAt(float x, float y) const;
 
 	float width = 0.0f;
 	float height = 0.0f;
@@ -154,6 +168,10 @@ private:
 
 	ColonistId selected_colonist = INVALID_COLONIST;
 	BuildingId selected_building = INVALID_BUILDING;
+	std::vector<ColonistId> occupants;
+	int hovered_row = -1;
+	int pressed_row = -1;
+	ColonistId clicked_occupant = INVALID_COLONIST;
 	bool build_mode = false;
 	int ghost_quarter_turns = 0;
 	UiButton hovered = UiButton::None;

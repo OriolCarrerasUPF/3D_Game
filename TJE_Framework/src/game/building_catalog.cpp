@@ -3,6 +3,7 @@
 #include "asset_catalog.h"
 
 #include <algorithm>
+#include <cstdlib>
 #include <set>
 
 namespace
@@ -32,6 +33,7 @@ namespace
 		{ BuildingType::SolarPanel, "solar_panel" },
 		{ BuildingType::LandingPad, "landing_pad" },
 		{ BuildingType::HavenBeacon, "haven_beacon" },
+		{ BuildingType::Corridor, "corridor" },
 	};
 
 	const std::map<std::string, Job>& jobNames()
@@ -120,14 +122,15 @@ namespace
 	bool parseDefinition(Reader& r, const Json& value, BuildingDefinition& def, const std::string& pointer)
 	{
 		static const std::map<std::string, BuildingZone> zone_names{
-			{ "interior", BuildingZone::Interior }, { "exterior", BuildingZone::Exterior }, { "boundary", BuildingZone::Boundary } };
+			{ "interior", BuildingZone::Interior }, { "exterior", BuildingZone::Exterior }, { "network", BuildingZone::Network } };
 		static const std::map<std::string, PlacementKind> placement_names{
-			{ "footprint", PlacementKind::Footprint }, { "doorSocket", PlacementKind::DoorSocket } };
+			{ "footprint", PlacementKind::Footprint }, { "airlock", PlacementKind::Airlock }, { "corridor", PlacementKind::Corridor } };
 		static const std::map<std::string, DepositType> deposit_names{ { "iron", DepositType::Iron }, { "copper", DepositType::Copper } };
 		static const std::map<std::string, ServiceType> service_names{ { "eat", ServiceType::Eat }, { "drink", ServiceType::Drink } };
 
-		if (!r.keys(value, { "id", "label", "zone", "placement", "footprint", "requiredDeposit", "cost", "construction",
-				"operation", "accessOffsets", "services", "power", "water", "oxygenCapacity", "storageCapacity", "recipe", "visuals" }, pointer))
+		if (!r.keys(value, { "id", "label", "zone", "placement", "footprint", "insideOffsets", "crossings", "requiredDeposit", "cost",
+				"construction", "operation", "accessOffsets", "services", "power", "water", "oxygenCapacity", "storageCapacity", "recipe",
+				"visuals" }, pointer))
 			return false;
 
 		if (!json_data::readString(value["id"], def.id, r.file, childPointer(pointer, "id"), r.error) ||
@@ -138,25 +141,75 @@ namespace
 		if (!BuildingCatalog::typeFromId(def.id, def.type))
 			return r.fail(childPointer(pointer, "id"), "unknown building type '" + def.id + "'");
 
-		// Placement, zone and footprint.
+		// Placement, zone and footprint (base layout, plan C5): footprint buildings are domes
+		// (interior) or exterior buildings; corridors and airlocks build the network.
 		const std::string footprint_pointer = childPointer(pointer, "footprint");
-		if (def.placement == PlacementKind::DoorSocket)
+		const bool network_placement = def.placement != PlacementKind::Footprint;
+		if (network_placement != (def.zone == BuildingZone::Network))
+			return r.fail(childPointer(pointer, "zone"), network_placement
+				? "corridor and airlock buildings must use zone 'network'"
+				: "zone 'network' is only for corridor and airlock buildings");
+		if (!value["footprint"].is_array() || value["footprint"].size() != 2)
+			return r.fail(footprint_pointer, "expected a footprint [w, h]");
+		if (!r.readInt(value["footprint"][0], 1, BuildingCatalog::max_footprint_size, def.footprint_width, childPointer(footprint_pointer, std::size_t(0))) ||
+			!r.readInt(value["footprint"][1], 1, BuildingCatalog::max_footprint_size, def.footprint_height, childPointer(footprint_pointer, std::size_t(1))))
+			return false;
+		if (def.placement == PlacementKind::Corridor && (def.footprint_width != 1 || def.footprint_height != 1))
+			return r.fail(footprint_pointer, "a corridor is one cell: footprint [1, 1]");
+
+		// Cells that become inside on completion, and the door crossings between them and
+		// the rest of the (outside) footprint. Offsets are footprint cells at 0 deg.
+		auto insideFootprint = [&def](Cell offset) {
+			return offset.x >= 0 && offset.z >= 0 && offset.x < def.footprint_width && offset.z < def.footprint_height;
+		};
+		const std::string inside_pointer = childPointer(pointer, "insideOffsets");
+		if (!json_data::requireArray(value["insideOffsets"], 0, r.file, inside_pointer, r.error))
+			return false;
+		std::set<std::pair<int, int>> inside_set;
+		for (std::size_t i = 0; i < value["insideOffsets"].size(); ++i)
 		{
-			if (def.zone != BuildingZone::Boundary)
-				return r.fail(childPointer(pointer, "zone"), "a doorSocket building must use zone 'boundary'");
-			if (!value["footprint"].is_null())
-				return r.fail(footprint_pointer, "a doorSocket building has no footprint (use null)");
-		}
-		else
-		{
-			if (def.zone == BuildingZone::Boundary)
-				return r.fail(childPointer(pointer, "zone"), "zone 'boundary' is only for doorSocket buildings");
-			if (!value["footprint"].is_array() || value["footprint"].size() != 2)
-				return r.fail(footprint_pointer, "expected a footprint [w, h]");
-			if (!r.readInt(value["footprint"][0], 1, BuildingCatalog::max_footprint_size, def.footprint_width, childPointer(footprint_pointer, std::size_t(0))) ||
-				!r.readInt(value["footprint"][1], 1, BuildingCatalog::max_footprint_size, def.footprint_height, childPointer(footprint_pointer, std::size_t(1))))
+			const std::string ip = childPointer(inside_pointer, i);
+			Cell offset;
+			if (!r.readOffset(value["insideOffsets"][i], offset, ip))
 				return false;
+			if (!insideFootprint(offset))
+				return r.fail(ip, "inside offsets must be footprint cells");
+			if (!inside_set.insert({ offset.x, offset.z }).second)
+				return r.fail(ip, "duplicate inside offset");
+			def.inside_offsets.push_back(offset);
 		}
+		if (def.placement == PlacementKind::Footprint && !def.inside_offsets.empty())
+			return r.fail(inside_pointer, "only corridors and airlocks turn cells inside (use [])");
+		if (def.placement == PlacementKind::Corridor && def.inside_offsets.size() != 1)
+			return r.fail(inside_pointer, "a corridor turns its own cell inside: [[0, 0]]");
+		if (def.placement == PlacementKind::Airlock && (def.inside_offsets.empty() ||
+				def.inside_offsets.size() >= static_cast<std::size_t>(def.footprint_width * def.footprint_height)))
+			return r.fail(inside_pointer, "an airlock needs inside chamber cells and at least one outside apron cell");
+
+		const std::string crossings_pointer = childPointer(pointer, "crossings");
+		if (!json_data::requireArray(value["crossings"], 0, r.file, crossings_pointer, r.error))
+			return false;
+		for (std::size_t i = 0; i < value["crossings"].size(); ++i)
+		{
+			const std::string cp = childPointer(crossings_pointer, i);
+			const Json& item = value["crossings"][i];
+			DoorPortal portal;
+			if (!r.keys(item, { "outside", "inside" }, cp) ||
+				!r.readOffset(item["outside"], portal.outside, childPointer(cp, "outside")) ||
+				!r.readOffset(item["inside"], portal.inside, childPointer(cp, "inside")))
+				return false;
+			if (!insideFootprint(portal.outside) || inside_set.count({ portal.outside.x, portal.outside.z }))
+				return r.fail(childPointer(cp, "outside"), "the outside cell must be a footprint cell that stays outside");
+			if (!inside_set.count({ portal.inside.x, portal.inside.z }))
+				return r.fail(childPointer(cp, "inside"), "the inside cell must be one of insideOffsets");
+			if (std::abs(portal.outside.x - portal.inside.x) + std::abs(portal.outside.z - portal.inside.z) != 1)
+				return r.fail(cp, "outside and inside cells must be 4-neighbours");
+			def.crossings.push_back(portal);
+		}
+		if ((def.placement == PlacementKind::Airlock) == def.crossings.empty())
+			return r.fail(crossings_pointer, def.placement == PlacementKind::Airlock
+				? "an airlock needs at least one door crossing"
+				: "only an airlock has door crossings (use [])");
 
 		if (!value["requiredDeposit"].is_null())
 		{
@@ -191,10 +244,8 @@ namespace
 		const std::string access_pointer = childPointer(pointer, "accessOffsets");
 		if (!json_data::requireArray(value["accessOffsets"], 0, r.file, access_pointer, r.error))
 			return false;
-		if (def.placement == PlacementKind::DoorSocket && !value["accessOffsets"].empty())
-			return r.fail(access_pointer, "a doorSocket building uses its door crossings as access (use [])");
-		if (def.placement == PlacementKind::Footprint && value["accessOffsets"].empty())
-			return r.fail(access_pointer, "a footprint building needs at least one access offset");
+		if (value["accessOffsets"].empty())
+			return r.fail(access_pointer, "a building needs at least one access offset");
 		std::set<std::pair<int, int>> seen_offsets;
 		for (std::size_t i = 0; i < value["accessOffsets"].size(); ++i)
 		{
@@ -222,7 +273,7 @@ namespace
 			def.services.push_back(service);
 		}
 		if (!def.services.empty() && def.placement != PlacementKind::Footprint)
-			return r.fail(services_pointer, "services need footprint access cells");
+			return r.fail(services_pointer, "services need a dome or exterior building");
 
 		// Utilities and capacities.
 		const std::string power_pointer = childPointer(pointer, "power");
@@ -244,6 +295,8 @@ namespace
 				return false;
 			if (!def.has_operation)
 				return r.fail(childPointer(pointer, "recipe"), "a recipe needs an operation role (someone has to work it)");
+			if (def.placement != PlacementKind::Footprint)
+				return r.fail(childPointer(pointer, "recipe"), "corridors and airlocks have no operation");
 			def.recipe = recipe;
 		}
 		else if (def.has_operation)

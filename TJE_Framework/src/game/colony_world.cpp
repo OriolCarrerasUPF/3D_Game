@@ -232,6 +232,7 @@ bool ColonyWorld::buildStaticViews(const SceneLoadResult& scene, DataLoadError& 
 	static_views.swap(pending_views);
 	instance_count = pending_instance_count;
 	surface_heights = pending_heights;
+	static_surface_heights = pending_heights;
 	return true;
 }
 
@@ -241,6 +242,8 @@ void ColonyWorld::syncVisuals(const ColonySimulation& simulation, float alpha)
 {
 	alpha = std::clamp(alpha, 0.0f, 1.0f);
 	syncBuildings(simulation);
+	if (corridor_revision != simulation.getGrid().getRevision())
+		syncCorridorPieces(simulation);
 	syncColonists(simulation, alpha);
 	const NavigationGrid& grid = simulation.getGrid();
 	if (overlay_revision != grid.getRevision())
@@ -257,7 +260,9 @@ void ColonyWorld::syncColonists(const ColonySimulation& simulation, float alpha)
 	for (auto it = colonist_views.begin(); it != colonist_views.end();)
 	{
 		const ColonistRecord* colonist = simulation.findColonist(it->first);
-		if (!colonist || colonist->state == ColonistState::Dead || colonist->job != it->second.job)
+		// P05B: a colonist inside a dome is hidden (no view, not pickable).
+		if (!colonist || colonist->state == ColonistState::Dead || colonist->job != it->second.job ||
+			colonist->current_dome != INVALID_BUILDING)
 		{
 			destroyDynamicView(it->second.view);
 			it = colonist_views.erase(it);
@@ -266,9 +271,11 @@ void ColonyWorld::syncColonists(const ColonySimulation& simulation, float alpha)
 			++it;
 	}
 
+	const NavigationGrid& grid = simulation.getGrid();
+	const float cell = grid.getCellSize();
 	for (const ColonistRecord& colonist : simulation.getColonists())
 	{
-		if (colonist.state == ColonistState::Dead)
+		if (colonist.state == ColonistState::Dead || colonist.current_dome != INVALID_BUILDING)
 			continue;
 		auto it = colonist_views.find(colonist.id);
 		if (it == colonist_views.end())
@@ -283,8 +290,23 @@ void ColonyWorld::syncColonists(const ColonySimulation& simulation, float alpha)
 				throw std::runtime_error(error.describe());
 			it = colonist_views.emplace(colonist.id, ColonistView{ view, colonist.job }).first;
 		}
-		const Vector3 position(lerp(colonist.previous_position.x, colonist.position.x, alpha), 0.0f,
+		Vector3 position(lerp(colonist.previous_position.x, colonist.position.x, alpha), 0.0f,
 			lerp(colonist.previous_position.z, colonist.position.z, alpha));
+		// Passage axis (C5.2): blend the offsets of the cell the colonist left and the one it
+		// walks to, so it moves along the middle of corridors and through the door frame.
+		const Cell from = colonist.last_cell;
+		const Cell to = colonist.route.finished() ? from : colonist.route.cells[colonist.route.next_index];
+		const auto offset_from = base_layout::offsetAt(passage_offsets, from);
+		const auto offset_to = base_layout::offsetAt(passage_offsets, to);
+		float t = 0.0f;
+		if (!(to == from))
+		{
+			const Vector3 start = grid.cellCenter(from);
+			t = std::clamp(std::sqrt((position.x - start.x) * (position.x - start.x) +
+				(position.z - start.z) * (position.z - start.z)) / cell, 0.0f, 1.0f);
+		}
+		position.x += lerp(offset_from.first, offset_to.first, t) * cell;
+		position.z += lerp(offset_from.second, offset_to.second, t) * cell;
 		const float yaw = lerpAngleRad(colonist.previous_yaw, colonist.yaw, alpha);
 		setDynamicViewPose(it->second.view, position, yaw);
 	}
@@ -312,63 +334,23 @@ void ColonyWorld::syncBuildings(const ColonySimulation& simulation)
 		if (building_views.count(building.id))
 			continue; // buildings never move: posed once
 		const BuildingDefinition* def = simulation.findDefinition(building.type);
-		if (!def)
+		if (!def || building.footprint_cells.empty())
 			continue;
 
-		// Placement frame: footprint centre and quarter-turn yaw; an Exit Door sits on its
-		// crossing edge (same rule as tools/generate_arkfall_scene.py) and is scaled to the
-		// crossing count.
-		Vector3 centre;
-		float base_yaw = static_cast<float>(building.quarter_turns) * 0.5f * PI;
-		float door_width = 0.0f;
-		float min_x = 0.0f, max_x = 0.0f, min_z = 0.0f, max_z = 0.0f;
-		if (building.door_index)
+		// Placement frame: footprint centre and quarter-turn yaw (the Exit Door is a 2 x 3
+		// airlock like any other footprint since P05B).
+		const float base_yaw = static_cast<float>(building.quarter_turns) * 0.5f * PI;
+		int cx0 = building.footprint_cells.front().x, cx1 = cx0, cz0 = building.footprint_cells.front().z, cz1 = cz0;
+		for (Cell c : building.footprint_cells)
 		{
-			const std::vector<DoorPortal>& portals = grid.getDoorPortals(*building.door_index);
-			if (portals.empty())
-				continue;
-			const bool west_east = portals.front().inside.x != portals.front().outside.x;
-			float along = 0.0f;
-			for (const DoorPortal& portal : portals)
-			{
-				const Vector3 c = grid.cellCenter(portal.inside);
-				along += west_east ? c.z : c.x;
-			}
-			along /= static_cast<float>(portals.size());
-			const Cell a = portals.front().inside, b = portals.front().outside;
-			if (west_east)
-			{
-				const float edge_x = grid.getOriginX() + static_cast<float>(std::max(a.x, b.x)) * cell;
-				centre = Vector3(edge_x, 0.0f, along);
-				base_yaw = 0.5f * PI;
-			}
-			else
-			{
-				const float edge_z = grid.getOriginZ() + static_cast<float>(std::max(a.z, b.z)) * cell;
-				centre = Vector3(along, 0.0f, edge_z);
-				base_yaw = 0.0f;
-			}
-			door_width = static_cast<float>(portals.size()) * cell;
-			const float half_along = door_width * 0.5f, half_across = cell * 0.25f;
-			min_x = centre.x - (west_east ? half_across : half_along); max_x = centre.x + (west_east ? half_across : half_along);
-			min_z = centre.z - (west_east ? half_along : half_across); max_z = centre.z + (west_east ? half_along : half_across);
+			cx0 = std::min(cx0, c.x); cx1 = std::max(cx1, c.x);
+			cz0 = std::min(cz0, c.z); cz1 = std::max(cz1, c.z);
 		}
-		else
-		{
-			if (building.footprint_cells.empty())
-				continue;
-			int cx0 = building.footprint_cells.front().x, cx1 = cx0, cz0 = building.footprint_cells.front().z, cz1 = cz0;
-			for (Cell c : building.footprint_cells)
-			{
-				cx0 = std::min(cx0, c.x); cx1 = std::max(cx1, c.x);
-				cz0 = std::min(cz0, c.z); cz1 = std::max(cz1, c.z);
-			}
-			min_x = grid.getOriginX() + static_cast<float>(cx0) * cell;
-			max_x = grid.getOriginX() + static_cast<float>(cx1 + 1) * cell;
-			min_z = grid.getOriginZ() + static_cast<float>(cz0) * cell;
-			max_z = grid.getOriginZ() + static_cast<float>(cz1 + 1) * cell;
-			centre = Vector3((min_x + max_x) * 0.5f, 0.0f, (min_z + max_z) * 0.5f);
-		}
+		const float min_x = grid.getOriginX() + static_cast<float>(cx0) * cell;
+		const float max_x = grid.getOriginX() + static_cast<float>(cx1 + 1) * cell;
+		const float min_z = grid.getOriginZ() + static_cast<float>(cz0) * cell;
+		const float max_z = grid.getOriginZ() + static_cast<float>(cz1 + 1) * cell;
+		const Vector3 centre((min_x + max_x) * 0.5f, 0.0f, (min_z + max_z) * 0.5f);
 
 		BuildingView view;
 		float top = min_building_pick_height;
@@ -379,23 +361,77 @@ void ColonyWorld::syncBuildings(const ColonySimulation& simulation)
 			if (id == invalid_dynamic_view)
 				throw std::runtime_error(error.describe());
 			const AssetDefinition* asset = assets->findAsset(visual.asset_id);
-			float scale = visual.scale;
-			if (door_width > 0.0f && asset)
-			{
-				const float asset_width = asset->picking_bounds_max.x - asset->picking_bounds_min.x;
-				if (asset_width > 1e-4f)
-					scale *= door_width / asset_width;
-			}
 			const Vector3 position = centre + rotateXZ(visual.offset, base_yaw);
-			setDynamicViewPose(id, position, base_yaw + visual.yaw_degrees * DEG2RAD, scale);
+			setDynamicViewPose(id, position, base_yaw + visual.yaw_degrees * DEG2RAD, visual.scale, false);
 			if (asset)
-				top = std::max(top, asset->picking_bounds_max.y * scale + visual.offset.y);
+				top = std::max(top, asset->picking_bounds_max.y * visual.scale + visual.offset.y);
 			view.views.push_back(id);
 		}
-		const float floor = getVisualGroundHeight(centre.x, centre.z);
+		// Corridors and airlocks have a floor: colonists walking there stand on it.
+		if (def->hasWalkableFootprint())
+			surface_heights.addSurface(min_x, min_z, max_x, max_z, baseFloorHeight());
 		view.box_min = Vector3(min_x, 0.0f, min_z);
-		view.box_max = Vector3(max_x, floor + top, max_z);
+		view.box_max = Vector3(max_x, top, max_z);
 		building_views.emplace(building.id, std::move(view));
+	}
+}
+
+float ColonyWorld::baseFloorHeight() const
+{
+	// Top of the team-authored corridor floor (0.1 m, plan C5.2); the airlock matches it.
+	const AssetDefinition* floor = assets->findAsset("corridor_floor");
+	return floor ? floor->picking_bounds_max.y : 0.1f; // picking bounds are already scaled
+}
+
+void ColonyWorld::syncCorridorPieces(const ColonySimulation& simulation)
+{
+	const NavigationGrid& grid = simulation.getGrid();
+	corridor_revision = grid.getRevision();
+	for (DynamicViewId piece : corridor_piece_views)
+		destroyDynamicView(piece);
+	corridor_piece_views.clear();
+	passage_offsets.clear();
+
+	base_layout::CellSet corridor, inside;
+	base_layout::EdgeSet open_edges;
+	for (int z = 0; z < grid.getHeight(); ++z)
+		for (int x = 0; x < grid.getWidth(); ++x)
+			if (grid.getZone(Cell{ x, z }) == Zone::Inside)
+				inside.insert({ x, z });
+	for (const BuildingRecord& building : simulation.getBuildings())
+	{
+		const BuildingDefinition* def = simulation.findDefinition(building.type);
+		if (!def || !building.isComplete())
+			continue;
+		if (def->placement == PlacementKind::Corridor)
+			for (Cell c : building.footprint_cells)
+				corridor.insert(base_layout::key(c));
+		else if (def->placement == PlacementKind::Airlock)
+			base_layout::addAirlockOffsets(building.footprint_cells, building.quarter_turns, passage_offsets);
+		else if (def->isDome())
+		{
+			// A dome entrance leaves the corridor open towards the dome.
+			for (Cell access : building.access_cells)
+				for (Cell c : building.footprint_cells)
+					if (std::abs(c.x - access.x) + std::abs(c.z - access.z) == 1)
+						open_edges.insert({ base_layout::key(access), base_layout::key(c) });
+		}
+	}
+
+	const std::vector<base_layout::Piece> pieces = base_layout::corridorPieces(corridor, inside, open_edges);
+	base_layout::addCorridorOffsets(pieces, passage_offsets);
+	const float cell = grid.getCellSize();
+	for (const base_layout::Piece& piece : pieces)
+	{
+		const char* asset_id = piece.kind == base_layout::PieceKind::Wall ? base_layout::wall_asset_id
+			: piece.kind == base_layout::PieceKind::Arch ? base_layout::arch_asset_id : base_layout::junction_asset_id;
+		DataLoadError error;
+		const DynamicViewId id = createDynamicView(asset_id, base_layout::piece_material_id, error);
+		if (id == invalid_dynamic_view)
+			throw std::runtime_error(error.describe());
+		const Vector3 position(grid.getOriginX() + piece.x * cell, 0.0f, grid.getOriginZ() + piece.z * cell);
+		setDynamicViewPose(id, position, piece.yaw_degrees * DEG2RAD, 1.0f, false);
+		corridor_piece_views.push_back(id);
 	}
 }
 
@@ -435,6 +471,12 @@ void ColonyWorld::clearSimulationViews()
 			destroyDynamicView(dynamic);
 	}
 	building_views.clear();
+	for (DynamicViewId piece : corridor_piece_views)
+		destroyDynamicView(piece);
+	corridor_piece_views.clear();
+	corridor_revision = std::numeric_limits<std::uint64_t>::max();
+	passage_offsets.clear();
+	surface_heights = static_surface_heights;
 	selected_building = INVALID_BUILDING;
 	overlay_revision = std::numeric_limits<std::uint64_t>::max();
 	selected_colonist = INVALID_COLONIST;
@@ -663,16 +705,16 @@ DynamicViewId ColonyWorld::createDynamicView(const std::string& asset_id, const 
 	return id;
 }
 
-bool ColonyWorld::setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale)
+bool ColonyWorld::setDynamicViewPose(DynamicViewId id, const Vector3& gameplay_position, float yaw_radians, float scale,
+	bool on_visual_surface)
 {
 	const auto it = dynamic_records.find(id);
 	if (it == dynamic_records.end())
 		return false;
 	DynamicRecord& record = it->second;
 	DynamicGroup& group = *record.group;
-	record.visual_position.set(gameplay_position.x,
-		gameplay_position.y + surface_heights.heightAt(gameplay_position.x, gameplay_position.z),
-		gameplay_position.z);
+	const float surface = on_visual_surface ? surface_heights.heightAt(gameplay_position.x, gameplay_position.z) : 0.0f;
+	record.visual_position.set(gameplay_position.x, gameplay_position.y + surface, gameplay_position.z);
 	record.visual_yaw = yaw_radians + group.forward_yaw;
 	group.view->setInstance(record.slot, world_transform::makeInstanceTransform(
 		record.visual_position, record.visual_yaw, Vector3(scale, scale, scale)));

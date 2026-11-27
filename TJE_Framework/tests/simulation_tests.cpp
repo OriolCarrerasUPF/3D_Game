@@ -1,4 +1,5 @@
-// P03 movement and scripted-route checks for ColonySimulation (headless).
+// P03 movement and scripted-route checks for ColonySimulation (headless), on the P05B
+// base made of an Exit Door and a corridor.
 
 #include "test_harness.h"
 
@@ -11,24 +12,21 @@ namespace
 {
 	using json_data::Json;
 
-	// Same layout as scenario_tests: base x=5..10 z=5..10, west door (4,7)->(5,7).
+	// P05B base: an Exit Door (2 x 3 airlock turned west, apron x=4, chamber x=5..6,
+	// crossings (4,6)->(5,6) and (4,7)->(5,7)) and a corridor strip x=7..10, z=6..7.
 	ScenarioDefinition makeScenario(bool with_route = true, bool loop = true)
 	{
 		Json doc = Json::parse(R"({
 			"schemaVersion": 1,
 			"grid": { "width": 16, "height": 16, "cellSize": 1.0, "originXZ": [-8, -8] },
-			"base": {
-				"interior": { "min": [5, 5], "max": [10, 10] },
-				"exitDoors": [ { "id": "door", "openAtStart": true,
-					"crossings": [ { "outside": [4, 7], "inside": [5, 7] } ] } ]
-			},
 			"deposits": [ { "id": "iron", "resource": "iron", "cell": [1, 1] } ],
 			"staticBlockers": [],
 			"initialColonists": [ { "id": 1, "job": "miner", "cell": [2, 7],
 				"needs": { "hunger": 100, "thirst": 100, "oxygen": 100 } } ],
 			"initialInventory": { "steel": 10 },
 			"cargoCapacity": 100,
-			"initialBuildings": [],
+			"initialBuildings": [ { "type": "exit_door", "origin": [4, 6], "quarterTurns": 3 },
+				{ "type": "corridor", "from": [7, 6], "to": [10, 7] } ],
 			"debugRoute": { "colonistId": 1, "loop": true, "dwellSeconds": 0.5,
 				"stops": [ { "label": "store", "cell": [9, 7] }, { "label": "mine", "cell": [2, 1] } ] }
 		})");
@@ -56,6 +54,10 @@ namespace
 		const ColonistCatalogLoadResult result = definitions.colonists.load(path);
 		if (!result)
 			test::fail(__FILE__, __LINE__, result.error->describe());
+		// The doors and corridors of the test base come from the shipped buildings.json.
+		const BuildingCatalogLoadResult buildings = definitions.buildings.load("data/arkfall/buildings.json");
+		if (!buildings)
+			test::fail(__FILE__, __LINE__, buildings.error->describe());
 		std::error_code ec;
 		std::filesystem::remove(path, ec);
 		return definitions;
@@ -296,4 +298,42 @@ TEST_CASE("simulation: debug commands return structured results")
 
 	ColonySimulation empty;
 	CHECK_EQ(empty.apply(GameCommand::clearDebugObstacles()).code, std::string("not_initialized"));
+}
+
+TEST_CASE("simulation: a debug route that needs a missing door is rejected at start")
+{
+	Json doc = Json::parse(R"({
+		"schemaVersion": 1,
+		"grid": { "width": 16, "height": 16, "cellSize": 1.0, "originXZ": [-8, -8] },
+		"deposits": [], "staticBlockers": [],
+		"initialColonists": [ { "id": 1, "job": "miner", "cell": [2, 7], "needs": { "hunger": 100, "thirst": 100, "oxygen": 100 } } ],
+		"initialInventory": {}, "cargoCapacity": 100,
+		"initialBuildings": [ { "type": "exit_door", "origin": [4, 6], "quarterTurns": 3 },
+			{ "type": "corridor", "from": [7, 6], "to": [10, 7] } ],
+		"debugRoute": { "colonistId": 1, "loop": false, "dwellSeconds": 0,
+			"stops": [ { "label": "store", "cell": [9, 7] } ] } })");
+	const ScenarioLoadResult with_door = ScenarioLoader().parse(doc, "scenario.json");
+	CHECK(with_door);
+	ColonySimulation ok;
+	std::string error;
+	CHECK(ok.initialize(with_door.scenario, makeDefinitions(2.0f), error));
+
+	// A corridor needs the door to join the base.
+	Json no_door_doc = doc;
+	no_door_doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [7, 6], "to": [10, 7] } ])");
+	const ScenarioLoadResult no_door = ScenarioLoader().parse(no_door_doc, "scenario.json");
+	CHECK(no_door);
+	ColonySimulation refused;
+	CHECK(!refused.initialize(no_door.scenario, makeDefinitions(2.0f), error));
+	CHECK(error.rfind("/initialBuildings/0", 0) == 0);
+
+	// A stop the walls of blockers cut off: the loader cannot know, the simulation refuses.
+	Json cut_off = doc;
+	cut_off["staticBlockers"] = Json::parse(R"([ { "id": "ridge", "min": [12, 0], "max": [12, 15] } ])");
+	cut_off["debugRoute"]["stops"][0]["cell"] = Json::array({ 14, 3 });
+	const ScenarioLoadResult loaded = ScenarioLoader().parse(cut_off, "scenario.json");
+	CHECK(loaded);
+	ColonySimulation unreachable;
+	CHECK(!unreachable.initialize(loaded.scenario, makeDefinitions(2.0f), error));
+	CHECK(error.rfind("/debugRoute/stops/0/cell", 0) == 0);
 }

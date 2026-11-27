@@ -19,11 +19,6 @@ namespace
 		return "(" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ")";
 	}
 
-	bool areNeighbours(Cell a, Cell b)
-	{
-		return std::abs(a.x - b.x) + std::abs(a.z - b.z) == 1;
-	}
-
 	// Helper that keeps the file path and stops at the first error.
 	class Reader
 	{
@@ -63,85 +58,6 @@ namespace
 		return true;
 	}
 
-	bool parseDoors(Reader& r, const Json& value, ScenarioDefinition& scenario, std::set<std::string>& ids)
-	{
-		if (!json_data::requireArray(value, 1, r.file, "/base/exitDoors", r.error))
-			return false;
-		std::set<std::pair<int, int>> used_cells;
-		for (std::size_t d = 0; d < value.size(); ++d)
-		{
-			const std::string pointer = childPointer("/base/exitDoors", d);
-			const Json& item = value[d];
-			ExitDoorDefinition door;
-			if (!r.keys(item, {"id", "openAtStart", "crossings"}, pointer) ||
-				!json_data::readString(item["id"], door.id, r.file, childPointer(pointer, "id"), r.error) ||
-				!json_data::readBool(item["openAtStart"], door.open_at_start, r.file, childPointer(pointer, "openAtStart"), r.error) ||
-				!json_data::requireArray(item["crossings"], 1, r.file, childPointer(pointer, "crossings"), r.error))
-				return false;
-			if (!ids.insert(door.id).second)
-				return r.fail(childPointer(pointer, "id"), "duplicate id '" + door.id + "'");
-
-			int side_dx = 0, side_dz = 0;
-			for (std::size_t c = 0; c < item["crossings"].size(); ++c)
-			{
-				const std::string cp = childPointer(childPointer(pointer, "crossings"), c);
-				const Json& crossing = item["crossings"][c];
-				DoorPortal portal;
-				if (!r.keys(crossing, {"outside", "inside"}, cp) ||
-					!r.cell(crossing["outside"], portal.outside, scenario.grid, childPointer(cp, "outside")) ||
-					!r.cell(crossing["inside"], portal.inside, scenario.grid, childPointer(cp, "inside")))
-					return false;
-				if (scenario.isInterior(portal.outside))
-					return r.fail(childPointer(cp, "outside"), "cell " + describeCell(portal.outside) + " is inside the base");
-				if (!scenario.isInterior(portal.inside))
-					return r.fail(childPointer(cp, "inside"), "cell " + describeCell(portal.inside) + " is outside the base");
-				if (!areNeighbours(portal.outside, portal.inside))
-					return r.fail(cp, "outside and inside cells must be 4-neighbours");
-				const int dx = portal.inside.x - portal.outside.x;
-				const int dz = portal.inside.z - portal.outside.z;
-				if (c == 0)
-				{
-					side_dx = dx;
-					side_dz = dz;
-				}
-				else if (dx != side_dx || dz != side_dz)
-					return r.fail(cp, "all crossings of a door must be on the same side of the base");
-				if (!used_cells.insert({ portal.inside.x, portal.inside.z }).second ||
-					!used_cells.insert({ portal.outside.x, portal.outside.z }).second)
-					return r.fail(cp, "crossing cells are already used by another crossing");
-				door.crossings.push_back(portal);
-			}
-
-			// Contiguous along the wall: sorted coordinates along the side must be consecutive.
-			std::vector<int> along;
-			for (const DoorPortal& portal : door.crossings)
-				along.push_back(side_dx != 0 ? portal.inside.z : portal.inside.x);
-			std::sort(along.begin(), along.end());
-			for (std::size_t i = 1; i < along.size(); ++i)
-			{
-				if (along[i] != along[i - 1] + 1)
-					return r.fail(childPointer(pointer, "crossings"), "crossings of a door must be contiguous");
-			}
-			scenario.exit_doors.push_back(door);
-		}
-		return true;
-	}
-
-	bool parseBase(Reader& r, const Json& value, ScenarioDefinition& scenario, std::set<std::string>& ids)
-	{
-		if (!r.keys(value, {"interior", "exitDoors"}, "/base") ||
-			!r.keys(value["interior"], {"min", "max"}, "/base/interior") ||
-			!r.cell(value["interior"]["min"], scenario.interior_min, scenario.grid, "/base/interior/min") ||
-			!r.cell(value["interior"]["max"], scenario.interior_max, scenario.grid, "/base/interior/max"))
-			return false;
-		if (scenario.interior_min.x > scenario.interior_max.x || scenario.interior_min.z > scenario.interior_max.z)
-			return r.fail("/base/interior", "min must not exceed max");
-		if (scenario.interior_min.x < 1 || scenario.interior_min.z < 1 ||
-			scenario.interior_max.x > scenario.grid.width - 2 || scenario.interior_max.z > scenario.grid.height - 2)
-			return r.fail("/base/interior", "leave at least one exterior cell around the base");
-		return parseDoors(r, value["exitDoors"], scenario, ids);
-	}
-
 	bool parseDeposits(Reader& r, const Json& value, ScenarioDefinition& scenario, std::set<std::string>& ids)
 	{
 		static const std::map<std::string, DepositType> resource_names{ { "iron", DepositType::Iron }, { "copper", DepositType::Copper } };
@@ -158,8 +74,6 @@ namespace
 				return false;
 			if (!ids.insert(deposit.id).second)
 				return r.fail(childPointer(pointer, "id"), "duplicate id '" + deposit.id + "'");
-			if (scenario.isInterior(deposit.cell))
-				return r.fail(childPointer(pointer, "cell"), "deposits must be outside the base");
 			scenario.deposits.push_back(deposit);
 		}
 		return true;
@@ -229,30 +143,33 @@ namespace
 			!json_data::requireArray(document["initialBuildings"], 0, r.file, "/initialBuildings", r.error))
 			return false;
 
-		std::set<std::string> used_sockets;
 		for (std::size_t i = 0; i < document["initialBuildings"].size(); ++i)
 		{
 			const std::string pointer = childPointer("/initialBuildings", i);
 			const Json& item = document["initialBuildings"][i];
 			InitialBuildingDefinition building;
-			if (!r.keys(item, {"type"}, pointer, {"origin", "quarterTurns", "socket"}) ||
+			if (!r.keys(item, {"type"}, pointer, {"origin", "quarterTurns", "from", "to"}) ||
 				!json_data::readString(item["type"], building.type_id, r.file, childPointer(pointer, "type"), r.error))
 				return false;
 			const bool has_origin = item.contains("origin") || item.contains("quarterTurns");
-			building.on_socket = item.contains("socket");
-			if (has_origin == building.on_socket)
-				return r.fail(pointer, "give either origin + quarterTurns (footprint building) or socket (Exit Door)");
-			if (building.on_socket)
+			building.is_strip = item.contains("from") || item.contains("to");
+			if (has_origin == building.is_strip)
+				return r.fail(pointer, "give either origin + quarterTurns, or from + to (corridor strip)");
+			if (building.is_strip)
 			{
-				if (!json_data::readString(item["socket"], building.socket_id, r.file, childPointer(pointer, "socket"), r.error))
+				if (building.type_id != "corridor")
+					return r.fail(childPointer(pointer, "type"), "only a corridor is placed as a from/to strip");
+				if (!item.contains("from"))
+					return r.fail(childPointer(pointer, "from"), "required field is missing");
+				if (!item.contains("to"))
+					return r.fail(childPointer(pointer, "to"), "required field is missing");
+				if (!r.cell(item["from"], building.strip_from, scenario.grid, childPointer(pointer, "from")) ||
+					!r.cell(item["to"], building.strip_to, scenario.grid, childPointer(pointer, "to")))
 					return false;
-				bool known = false;
-				for (const ExitDoorDefinition& door : scenario.exit_doors)
-					known = known || door.id == building.socket_id;
-				if (!known)
-					return r.fail(childPointer(pointer, "socket"), "unknown door socket '" + building.socket_id + "'");
-				if (!used_sockets.insert(building.socket_id).second)
-					return r.fail(childPointer(pointer, "socket"), "door socket '" + building.socket_id + "' already has a building");
+				const int span_x = std::abs(building.strip_to.x - building.strip_from.x) + 1;
+				const int span_z = std::abs(building.strip_to.z - building.strip_from.z) + 1;
+				if (span_x != 2 && span_z != 2)
+					return r.fail(pointer, "a corridor strip is straight and exactly 2 cells wide");
 			}
 			else
 			{
@@ -314,15 +231,6 @@ namespace
 						return r.fail(childPointer("/staticBlockers", i), "overlaps '" + inserted.first->second + "' at " + describeCell(Cell{ x, z }));
 				}
 		}
-		for (std::size_t d = 0; d < scenario.exit_doors.size(); ++d)
-			for (const DoorPortal& portal : scenario.exit_doors[d].crossings)
-				for (Cell cell : { portal.outside, portal.inside })
-				{
-					const auto it = occupied.find({ cell.x, cell.z });
-					if (it != occupied.end())
-						return r.fail(childPointer("/base/exitDoors", d), "door cell " + describeCell(cell) + " is blocked by '" + it->second + "'");
-				}
-
 		for (std::size_t i = 0; i < scenario.initial_colonists.size(); ++i)
 		{
 			const Cell cell = scenario.initial_colonists[i].cell;
@@ -340,33 +248,61 @@ namespace
 		if (!colonist)
 			return r.fail("/debugRoute/colonistId", "unknown colonist id " + std::to_string(route.colonist_id));
 
-		// Every leg (including the loop back) must be walkable with the doors' initial state.
-		const NavigationGrid grid = buildNavigationGrid(scenario);
-		std::vector<Cell> path;
-		Cell from = colonist->cell;
-		const std::size_t legs = route.stops.size() + (route.loop ? 1 : 0);
-		for (std::size_t leg = 0; leg < legs; ++leg)
+		// Stops must be free cells. Whether every leg is walkable depends on the doors and
+		// corridors of initialBuildings, so ColonySimulation::initialize checks the routes.
+		for (std::size_t i = 0; i < route.stops.size(); ++i)
 		{
-			const std::size_t stop_index = leg % route.stops.size();
-			const Cell to = route.stops[stop_index].cell;
-			const std::string pointer = childPointer(childPointer("/debugRoute/stops", stop_index), "cell");
-			if (!grid.isWalkable(to))
-				return r.fail(pointer, "stop " + describeCell(to) + " is blocked");
-			if (!grid.findPath(from, to, path))
-				return r.fail(pointer, "no 4-neighbour path from " + describeCell(from) + " to " + describeCell(to));
-			from = to;
+			const Cell to = route.stops[i].cell;
+			if (occupied.count({ to.x, to.z }))
+				return r.fail(childPointer(childPointer("/debugRoute/stops", i), "cell"), "stop " + describeCell(to) + " is blocked");
 		}
 		return true;
 	}
+}
+
+std::vector<Cell> corridorStripCells(Cell from, Cell to)
+{
+	// The long axis is the one that is not 2 cells wide (a 2 x 2 strip runs along z).
+	const int span_x = std::abs(to.x - from.x) + 1;
+	const bool along_x = span_x != 2;
+	const int step_x = to.x >= from.x ? 1 : -1;
+	const int step_z = to.z >= from.z ? 1 : -1;
+	std::vector<Cell> cells;
+	if (along_x)
+	{
+		for (int x = from.x;; x += step_x)
+		{
+			for (int z = from.z;; z += step_z)
+			{
+				cells.push_back(Cell{ x, z });
+				if (z == to.z)
+					break;
+			}
+			if (x == to.x)
+				break;
+		}
+	}
+	else
+	{
+		for (int z = from.z;; z += step_z)
+		{
+			for (int x = from.x;; x += step_x)
+			{
+				cells.push_back(Cell{ x, z });
+				if (x == to.x)
+					break;
+			}
+			if (z == to.z)
+				break;
+		}
+	}
+	return cells;
 }
 
 NavigationGrid buildNavigationGrid(const ScenarioDefinition& scenario)
 {
 	NavigationGrid grid(scenario.grid.width, scenario.grid.height, scenario.grid.cell_size,
 		scenario.grid.origin_x, scenario.grid.origin_z);
-	grid.setZoneRect(scenario.interior_min, scenario.interior_max, Zone::Inside);
-	for (const ExitDoorDefinition& door : scenario.exit_doors)
-		grid.addDoor(door.crossings, door.open_at_start);
 	for (const DepositDefinition& deposit : scenario.deposits)
 		grid.setBlocked(deposit.cell, true);
 	for (const StaticBlockerDefinition& blocker : scenario.static_blockers)
@@ -395,14 +331,13 @@ ScenarioLoadResult ScenarioLoader::parse(const json_data::Json& document, const 
 	DataLoadError error;
 	Reader r(path, error);
 	ScenarioDefinition scenario;
-	std::set<std::string> ids; // doors, deposits and blockers share one id namespace
+	std::set<std::string> ids; // deposits and blockers share one id namespace
 
 	const bool ok =
-		r.keys(document, {"schemaVersion", "grid", "base", "deposits", "staticBlockers", "initialColonists",
+		r.keys(document, {"schemaVersion", "grid", "deposits", "staticBlockers", "initialColonists",
 			"initialInventory", "cargoCapacity", "initialBuildings"}, "", {"debugRoute"}) &&
 		json_data::checkSchemaVersion(document, supported_schema_version, path, error) &&
 		parseGrid(r, document["grid"], scenario.grid) &&
-		parseBase(r, document["base"], scenario, ids) &&
 		parseDeposits(r, document["deposits"], scenario, ids) &&
 		parseBlockers(r, document["staticBlockers"], scenario, ids) &&
 		parseColonists(r, document["initialColonists"], scenario) &&

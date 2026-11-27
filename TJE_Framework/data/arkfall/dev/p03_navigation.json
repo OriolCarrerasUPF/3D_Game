@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32.0, -32.0]},
+  "deposits": [
+    {"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
+    {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}
+  ],
+  "staticBlockers": [],
+  "initialColonists": [
+    {"id": 1, "job": "engineer", "cell": [18, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}}
+  ],
+  "initialInventory": {"steel": 60, "components": 20, "vegetables": 20},
+  "cargoCapacity": 100,
+  "initialBuildings": [
+    {"type": "exit_door", "origin": [22, 30], "quarterTurns": 3},
+    {"type": "corridor", "from": [25, 30], "to": [34, 31]}
+  ],
+  "debugRoute": {
+    "colonistId": 1,
+    "loop": true,
+    "dwellSeconds": 1.0,
+    "stops": [
+      {"label": "iron_mine_access", "cell": [9, 12]},
+      {"label": "airlock_apron", "cell": [22, 31]},
+      {"label": "airlock_chamber", "cell": [23, 31]},
+      {"label": "corridor_end", "cell": [33, 31]}
+    ]
+  }
+}

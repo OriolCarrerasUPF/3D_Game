@@ -231,8 +231,12 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 			y += 3.0f;
 			const NavigationGrid& grid = simulation.getGrid();
 			const Cell cell = colonist->last_cell;
-			texts.push_back({ x, y, "Cell (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ") " +
-				(grid.getZone(cell) == Zone::Inside ? "inside" : "outside"), text_dim, small_text_scale });
+			// P05B: a colonist inside a dome is hidden in the world; say where it is.
+			const std::string where = colonist->current_dome != INVALID_BUILDING
+				? "Inside " + simulation.describeBuilding(colonist->current_dome)
+				: std::string(grid.getZone(cell) == Zone::Inside ? "In the base" : "Outside");
+			texts.push_back({ x, y, fitText(where + "  -  cell (" + std::to_string(cell.x) + ", " + std::to_string(cell.z) + ")",
+				inner, small_text_scale), colonist->current_dome != INVALID_BUILDING ? text_accent : text_dim, small_text_scale });
 			y += 22.0f;
 
 			const struct { const char* label; float value; const char* material; } needs[] = {
@@ -262,13 +266,9 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 			const std::string label = def ? def->label : std::string("Building");
 			texts.push_back({ x, y, fitText(label + "  #" + std::to_string(building->id), line_room, text_scale), text_accent, text_scale });
 			y += 22.0f;
-			std::string where;
-			if (building->door_index)
-				where = "on Exit Door socket " + std::to_string(*building->door_index);
-			else
-				where = std::to_string(building->width) + "x" + std::to_string(building->height) + " at (" +
-					std::to_string(building->origin.x) + ", " + std::to_string(building->origin.z) + "), " +
-					std::to_string(building->quarter_turns * 90) + " deg";
+			const std::string where = std::to_string(building->width) + "x" + std::to_string(building->height) + " at (" +
+				std::to_string(building->origin.x) + ", " + std::to_string(building->origin.z) + "), " +
+				std::to_string(building->quarter_turns * 90) + " deg";
 			texts.push_back({ x, y, fitText(std::string(building->isComplete() ? "Complete" : "Blueprint") + ", " + where, inner, small_text_scale),
 				text_dim, small_text_scale });
 			y += 20.0f;
@@ -347,6 +347,31 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 					y += 13.0f;
 				}
 			}
+
+			// P05B: who is inside the dome (hidden in the world); each row opens that colonist.
+			if (def && def->isDome())
+			{
+				const std::vector<ColonistId>& inside = ui.getOccupants();
+				const UiRect first_row = ui.getOccupantRowRect(0);
+				texts.push_back({ x, first_row.y - 16.0f, "Inside (" + std::to_string(inside.size()) + "):", text_white, text_scale });
+				if (inside.empty())
+					texts.push_back({ x, first_row.y + 2.0f, "nobody", text_dim, small_text_scale });
+				for (int row = 0; row < ui.getVisibleOccupantRows(); ++row)
+				{
+					const ColonistRecord* occupant = simulation.findColonist(inside[static_cast<std::size_t>(row)]);
+					if (!occupant)
+						continue;
+					const UiRect rect = ui.getOccupantRowRect(row);
+					const bool hot = ui.getHoveredOccupantRow() == row;
+					if (hot)
+						quads.add("ui_button_hover", rect);
+					std::string text = occupant->name + " (" + ColonyUI::jobName(occupant->job) + ") - " + ColonyUI::stateName(occupant->state);
+					if (row == ColonyUI::max_occupant_rows - 1 && inside.size() > static_cast<std::size_t>(ColonyUI::max_occupant_rows))
+						text += "  +" + std::to_string(inside.size() - ColonyUI::max_occupant_rows) + " more";
+					texts.push_back({ rect.x + 4.0f, rect.y + 2.0f, fitText(text, rect.w - 8.0f, small_text_scale),
+						hot ? text_accent : text_white, small_text_scale });
+				}
+			}
 		}
 	}
 
@@ -367,7 +392,7 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 				(hud.ghost_inside ? "inside" : "outside") + ": " + hud.ghost_status;
 			ghost_color = hud.ghost_valid ? text_good : text_bad;
 		}
-		ghost += "   |   Building types arrive with buildings.json (P05)";
+		ghost += "   |   Placing buildings arrives in P07";
 		texts.push_back({ panel.x + 12.0f, panel.y + 34.0f, fitText(ghost, panel.w - 24.0f, small_text_scale),
 			ghost_color, small_text_scale });
 	}

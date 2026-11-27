@@ -1,12 +1,14 @@
 // P05 production loop (headless): building records, placement rules, inventory,
 // work-slot reservation/release, nearest-job selection, production from present
 // workers, atomic processing, capacity limits and the AssignJob order.
-// Scenarios are variations of data/arkfall/dev/production.json on the shipped map.
+// Scenarios are variations of data/arkfall/dev/production.json on the shipped map: since
+// P05B the domes (2 Storages, the Iron Processor) stand along a corridor behind an Exit Door.
 
 #include "test_harness.h"
 
 #include "game/colony_simulation.h"
 
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -128,17 +130,31 @@ TEST_CASE("production: dev scenario places its buildings, blocks footprints and 
 	ColonySimulation simulation;
 	if (!start(simulation, devScenario(), makeDefinitions()))
 		return;
-	CHECK_EQ(simulation.getBuildings().size(), static_cast<std::size_t>(4));
+	// Mine, Exit Door, 20 corridor cells, 2 Storages and the Iron Processor.
+	std::map<BuildingType, int> count;
+	for (const BuildingRecord& building : simulation.getBuildings())
+		++count[building.type];
+	CHECK_EQ(simulation.getBuildings().size(), static_cast<std::size_t>(25));
+	CHECK_EQ(count[BuildingType::Corridor], 20);
+	CHECK_EQ(count[BuildingType::Storage], 2);
+	CHECK_EQ(count[BuildingType::ExitDoor], 1);
 	const NavigationGrid& grid = simulation.getGrid();
 	const NavigationGrid bare = buildNavigationGrid(simulation.getScenario());
-	CHECK(grid.getRevision() > bare.getRevision()); // footprints bumped the revision
+	CHECK(grid.getRevision() > bare.getRevision()); // footprints and zones bumped the revision
 	for (const BuildingRecord& building : simulation.getBuildings())
 	{
 		CHECK(building.isComplete());
+		const BuildingDefinition* def = simulation.findDefinition(building.type);
 		for (Cell cell : building.footprint_cells)
-			CHECK(grid.isBlocked(cell));
-		for (Cell cell : building.access_cells)
-			CHECK(grid.isWalkable(cell));
+			CHECK(grid.isBlocked(cell) != def->hasWalkableFootprint());
+		for (Cell cell : building.inside_cells)
+			CHECK(grid.getZone(cell) == Zone::Inside);
+		// Every dome has an entrance on the corridor.
+		if (def->isDome())
+			CHECK(!simulation.usableAccessCells(building).empty());
+		if (!def->hasWalkableFootprint())
+			for (Cell cell : simulation.usableAccessCells(building))
+				CHECK(grid.isWalkable(cell));
 	}
 	const BuildingRecord* mine = firstOfType(simulation, BuildingType::IronMine);
 	CHECK(mine && mine->deposit_index && *mine->deposit_index == 0u);
@@ -311,8 +327,9 @@ TEST_CASE("production: repeated role changes always release the slot")
 TEST_CASE("production: processing runs while the inventory is exactly full")
 {
 	Json scenario = devScenario();
-	scenario["initialColonists"] = Json::array({ colonist(1, "miner", 26, 33) });
-	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12), building("iron_processor", 28, 33) });
+	scenario["initialColonists"] = Json::array({ colonist(1, "miner", 32, 30) });  // in the corridor
+	scenario["initialBuildings"].erase(4);   // no Storages: the 20-unit cargo hold applies
+	scenario["initialBuildings"].erase(3);
 	scenario["cargoCapacity"] = 20;
 	scenario["initialInventory"] = Json{ { "ironOre", 3 }, { "steel", 17 } };
 	ColonySimulation simulation;
@@ -367,31 +384,37 @@ TEST_CASE("production: full Storage stops the mine and never deletes items")
 	checkReservations(simulation);
 }
 
-TEST_CASE("production: an Exit Door building completes onto its socket and opens it")
+TEST_CASE("production: an Exit Door turns its chamber inside and registers two crossings")
 {
-	Json scenario = devScenario();
-	scenario["base"]["exitDoors"][0]["openAtStart"] = false;
-	scenario["initialBuildings"] = Json::array({ Json{ { "type", "exit_door" }, { "socket", "west_door" } } });
 	ColonySimulation simulation;
-	if (!start(simulation, scenario, makeDefinitions()))
+	if (!start(simulation, devScenario(), makeDefinitions()))
 		return;
-	CHECK(simulation.getGrid().isDoorOpen(0));
+	const NavigationGrid& grid = simulation.getGrid();
 	const BuildingRecord* door = firstOfType(simulation, BuildingType::ExitDoor);
 	CHECK(door && door->door_index && *door->door_index == 0u);
-	CHECK(door && door->footprint_cells.empty());
-	CHECK(door && door->access_cells.size() == 4u); // 2 crossings: outside + inside cells
-	CHECK(!simulation.validateDoorPlacement(0).valid); // the socket is taken
-	CHECK_EQ(simulation.validateDoorPlacement(0).code, std::string("socket_taken"));
-
-	// A door socket given twice is rejected by the loader.
-	scenario["initialBuildings"].push_back(scenario["initialBuildings"][0]);
-	std::string error;
-	ColonySimulation twice;
-	CHECK(!start(twice, scenario, makeDefinitions(), &error));
-	CHECK(error.find("/initialBuildings/1/socket") != std::string::npos);
+	CHECK(grid.isDoorOpen(0));
+	CHECK_EQ(grid.getDoorPortals(0).size(), static_cast<std::size_t>(2));
+	// Airlock at (22,30) turned west: apron x=22 outside, chamber x=23..24 inside.
+	CHECK(door && door->footprint_cells.size() == 6u);
+	CHECK(grid.getZone(Cell{ 22, 30 }) == Zone::Outside);
+	CHECK(grid.getZone(Cell{ 23, 30 }) == Zone::Inside && grid.getZone(Cell{ 24, 31 }) == Zone::Inside);
+	CHECK(grid.canStep(Cell{ 22, 30 }, Cell{ 23, 30 }));
+	CHECK(grid.canStep(Cell{ 22, 31 }, Cell{ 23, 31 }));
+	// The chamber walls seal it: no other step between the outside and the chamber.
+	CHECK(!grid.canStep(Cell{ 23, 29 }, Cell{ 23, 30 }));
+	CHECK(!grid.canStep(Cell{ 24, 32 }, Cell{ 24, 31 }));
+	CHECK(simulation.isDoorCell(Cell{ 22, 31 }) && simulation.isDoorCell(Cell{ 23, 31 }));
+	CHECK(!simulation.isDoorCell(Cell{ 24, 31 }));
+	// Corridor cells are inside and walkable; the corridor joins the chamber.
+	CHECK(grid.getZone(Cell{ 25, 30 }) == Zone::Inside && grid.isWalkable(Cell{ 25, 30 }));
+	CHECK(grid.canStep(Cell{ 24, 30 }, Cell{ 25, 30 }));
+	CHECK(simulation.isNetworkCell(Cell{ 34, 31 }) && !simulation.isNetworkCell(Cell{ 35, 31 }));
+	// Closing the door seals the base.
+	simulation.setDoorOpen(0, false);
+	CHECK(!grid.canStep(Cell{ 22, 30 }, Cell{ 23, 30 }));
 }
 
-TEST_CASE("production: placement rules for footprints, zones, deposits and access")
+TEST_CASE("production: placement rules for footprints, deposits, access and the base network")
 {
 	ColonySimulation simulation;
 	if (!start(simulation, devScenario(), makeDefinitions()))
@@ -405,25 +428,45 @@ TEST_CASE("production: placement rules for footprints, zones, deposits and acces
 	CHECK_EQ(code(BuildingType::IronMine, 55, 12), std::string("wrong_deposit"));
 	CHECK_EQ(code(BuildingType::IronMine, 7, 11), std::string("deposit_taken"));
 	CHECK_EQ(code(BuildingType::SolarPanel, 55, 12), std::string("deposit_in_the_way"));
-	CHECK_EQ(code(BuildingType::Storage, 10, 30), std::string("wrong_zone"));
-	CHECK_EQ(code(BuildingType::SolarPanel, 30, 30), std::string("wrong_zone"));
-	CHECK_EQ(code(BuildingType::Storage, 31, 27), std::string("occupied"));
-	CHECK_EQ(code(BuildingType::Greenhouse, 24, 30, 1), std::string("door_cells")); // covers (24,31),(24,32)
+	CHECK_EQ(code(BuildingType::Storage, 10, 30), std::string("needs_network"));   // no entrance on the base
+	CHECK_EQ(code(BuildingType::SolarPanel, 30, 30), std::string("occupied"));     // on the corridor
+	CHECK_EQ(code(BuildingType::SolarPanel, 35, 31), std::string("on_network"));   // access cell in the corridor
+	CHECK_EQ(code(BuildingType::Storage, 27, 33), std::string("occupied"));
 	CHECK_EQ(code(BuildingType::SolarPanel, 17, 29), std::string("spawn_cell"));
 	CHECK_EQ(code(BuildingType::LandingPad, 61, 61), std::string("out_of_bounds"));
-	CHECK_EQ(code(BuildingType::Storage, 32, 25), std::string("blocks_access")); // covers Storage #2's (32,26)
-	CHECK_EQ(code(BuildingType::ExitDoor, 30, 30), std::string("wrong_placement"));
-	CHECK_EQ(code(BuildingType::Storage, 30, 36), std::string("ok"));
+	CHECK_EQ(code(BuildingType::SolarPanel, 28, 32), std::string("blocks_access")); // Storage entrances (28,32),(29,32)
+	CHECK_EQ(code(BuildingType::Corridor, 35, 30), std::string("ok"));             // grows from the corridor end
+	CHECK_EQ(code(BuildingType::Corridor, 28, 32), std::string("ok"));             // over a dome's entrance candidate
+	CHECK_EQ(code(BuildingType::Corridor, 40, 40), std::string("needs_network"));
+	CHECK_EQ(code(BuildingType::Corridor, 21, 30), std::string("blocks_access"));  // in front of the airlock apron
+	CHECK_EQ(code(BuildingType::ExitDoor, 40, 40), std::string("ok"));             // a second airlock anywhere outside
+	CHECK_EQ(code(BuildingType::ExitDoor, 23, 26), std::string("ok"));
+	CHECK_EQ(code(BuildingType::ExitDoor, 22, 29), std::string("occupied"));
+	CHECK_EQ(code(BuildingType::Storage, 28, 28, 2), std::string("ok"));            // entrances (28,30),(29,30)
 
 	// Rotation: the same transform drives cells and access cells (C5).
-	const PlacementResult rotated = simulation.validatePlacement(BuildingType::Greenhouse, Cell{ 30, 35 }, 1);
+	const PlacementResult rotated = simulation.validatePlacement(BuildingType::Storage, Cell{ 28, 28 }, 2);
 	CHECK(rotated.valid);
-	CHECK_EQ(rotated.footprint_cells.size(), static_cast<std::size_t>(9));
-	const BuildingDefinition* greenhouse = simulation.findDefinition(BuildingType::Greenhouse);
-	for (std::size_t i = 0; i < greenhouse->access_offsets.size(); ++i)
+	CHECK_EQ(rotated.footprint_cells.size(), static_cast<std::size_t>(4));
+	const BuildingDefinition* storage = simulation.findDefinition(BuildingType::Storage);
+	for (std::size_t i = 0; i < storage->access_offsets.size(); ++i)
 	{
-		const Cell offset = footprint::rotateOffset(greenhouse->access_offsets[i], 3, 3, 1);
-		CHECK(rotated.access_cells[i] == (Cell{ 30 + offset.x, 35 + offset.z }));
+		const Cell offset = footprint::rotateOffset(storage->access_offsets[i], 2, 2, 2);
+		CHECK(rotated.access_cells[i] == (Cell{ 28 + offset.x, 28 + offset.z }));
+	}
+	// An airlock's crossings and inside cells rotate with it.
+	const PlacementResult airlock = simulation.validatePlacement(BuildingType::ExitDoor, Cell{ 40, 40 }, 1);
+	CHECK(airlock.valid);
+	CHECK_EQ(airlock.width, 3);
+	CHECK_EQ(airlock.height, 2);
+	CHECK_EQ(airlock.inside_cells.size(), static_cast<std::size_t>(4));
+	for (const DoorPortal& crossing : airlock.crossings)
+	{
+		CHECK(std::abs(crossing.outside.x - crossing.inside.x) + std::abs(crossing.outside.z - crossing.inside.z) == 1);
+		bool inside_listed = false;
+		for (Cell c : airlock.inside_cells)
+			inside_listed = inside_listed || c == crossing.inside;
+		CHECK(inside_listed);
 	}
 }
 
@@ -438,10 +481,10 @@ TEST_CASE("production: bad initial buildings and inventory report their JSON poi
 	CHECK(!a.isInitialized());
 
 	scenario = devScenario();
-	scenario["initialBuildings"].push_back(building("storage", 31, 27));
+	scenario["initialBuildings"].push_back(building("storage", 27, 33));
 	ColonySimulation b;
 	CHECK(!start(b, scenario, makeDefinitions(), &error));
-	CHECK(error.rfind("/initialBuildings/4:", 0) == 0);
+	CHECK(error.rfind("/initialBuildings/6:", 0) == 0);
 	CHECK(b.getBuildings().empty()); // nothing is left half-initialised
 
 	scenario = devScenario();
@@ -451,11 +494,19 @@ TEST_CASE("production: bad initial buildings and inventory report their JSON poi
 	CHECK(!start(c, scenario, makeDefinitions(), &error));
 	CHECK(error.rfind("/initialInventory", 0) == 0);
 
+	// A corridor that does not join the base, and a dome without an entrance.
 	scenario = devScenario();
-	scenario["initialBuildings"][0] = Json{ { "type", "iron_mine" }, { "socket", "west_door" } };
+	scenario["initialBuildings"].erase(1);             // no Exit Door
 	ColonySimulation d;
 	CHECK(!start(d, scenario, makeDefinitions(), &error));
-	CHECK(error.find("footprint building") != std::string::npos);
+	CHECK(error.rfind("/initialBuildings/1:", 0) == 0);
+	CHECK(error.find("join the base") != std::string::npos);
+
+	scenario = devScenario();
+	scenario["initialBuildings"].push_back(building("storage", 40, 40));
+	ColonySimulation e;
+	CHECK(!start(e, scenario, makeDefinitions(), &error));
+	CHECK(error.find("needs an entrance") != std::string::npos);
 }
 
 TEST_CASE("production: names come from the pool in ID order and must be enough")

@@ -97,7 +97,9 @@ bool ColonySimulation::initialize(const ScenarioDefinition& definition, const Ga
 		colonist.work_cell = colonist.last_cell;
 	}
 
-	// Initial (complete) buildings, validated with the same placement rules as P07.
+	// Initial (complete) buildings, validated with the same placement rules as P07. A
+	// corridor strip is placed cell by cell, row by row from `from`, so each cell joins
+	// the network through the door or an earlier cell of the strip (C5).
 	for (std::size_t i = 0; i < scenario.initial_buildings.size(); ++i)
 	{
 		const InitialBuildingDefinition& initial = scenario.initial_buildings[i];
@@ -109,37 +111,57 @@ bool ColonySimulation::initialize(const ScenarioDefinition& definition, const Ga
 			reset();
 			return false;
 		}
-		PlacementResult placement;
-		if (initial.on_socket)
+		if (initial.is_strip && def->placement != PlacementKind::Corridor)
 		{
-			if (def->placement != PlacementKind::DoorSocket)
-			{
-				error = pointer + ": '" + def->id + "' is a footprint building (give origin + quarterTurns)";
-				reset();
-				return false;
-			}
-			std::size_t door_index = 0;
-			while (door_index < scenario.exit_doors.size() && scenario.exit_doors[door_index].id != initial.socket_id)
-				++door_index;
-			placement = validateDoorPlacement(door_index);
-		}
-		else
-		{
-			if (def->placement != PlacementKind::Footprint)
-			{
-				error = pointer + ": '" + def->id + "' is built on a door socket (give socket)";
-				reset();
-				return false;
-			}
-			placement = validatePlacement(def->type, initial.origin, initial.quarter_turns);
-		}
-		if (!placement.valid)
-		{
-			error = pointer + ": " + def->label + " cannot be placed: " + placement.reason;
+			error = pointer + ": '" + def->id + "' is not a corridor (give origin + quarterTurns)";
 			reset();
 			return false;
 		}
-		addCompleteBuilding(def->type, placement, initial.quarter_turns, initial.origin);
+		std::vector<std::pair<Cell, int>> placements;
+		if (initial.is_strip)
+			for (Cell cell : corridorStripCells(initial.strip_from, initial.strip_to))
+				placements.push_back({ cell, 0 });
+		else
+			placements.push_back({ initial.origin, initial.quarter_turns });
+		for (const auto& [origin, quarter_turns] : placements)
+		{
+			const PlacementResult placement = validatePlacement(def->type, origin, quarter_turns);
+			if (!placement.valid)
+			{
+				error = pointer + ": " + def->label + " at " + cellText(origin) + " cannot be placed: " + placement.reason;
+				reset();
+				return false;
+			}
+			addCompleteBuilding(def->type, placement, quarter_turns, origin);
+		}
+	}
+
+	// The scripted debug route must be walkable now that the doors and corridors exist.
+	if (scenario.debug_route)
+	{
+		const DebugRouteDefinition& route = *scenario.debug_route;
+		const ColonistRecord* walker = findColonist(route.colonist_id);
+		if (!walker)
+		{
+			error = "/debugRoute/colonistId: unknown colonist id " + std::to_string(route.colonist_id);
+			reset();
+			return false;
+		}
+		Cell from = walker->last_cell;
+		const std::size_t legs = route.stops.size() + (route.loop ? 1 : 0);
+		for (std::size_t leg = 0; leg < legs; ++leg)
+		{
+			const std::size_t stop_index = leg % route.stops.size();
+			const Cell to = route.stops[stop_index].cell;
+			if (!grid.findPath(from, to, path_scratch))
+			{
+				error = "/debugRoute/stops/" + std::to_string(stop_index) + "/cell: no 4-neighbour path from " +
+					cellText(from) + " to " + cellText(to);
+				reset();
+				return false;
+			}
+			from = to;
+		}
 	}
 
 	inventory = Inventory(scenario.initial_inventory, 0);
@@ -328,6 +350,7 @@ void ColonySimulation::updateColonist(ColonistRecord& colonist, float dt)
 		updateScriptedColonist(colonist, dt);
 	else
 		updateWorker(colonist, dt);
+	updatePresence(colonist);
 }
 
 void ColonySimulation::updateScriptedColonist(ColonistRecord& colonist, float dt)
@@ -380,11 +403,73 @@ void ColonySimulation::updateScriptedColonist(ColonistRecord& colonist, float dt
 
 bool ColonySimulation::isDoorCell(Cell cell) const
 {
-	for (const ExitDoorDefinition& door : scenario.exit_doors)
-		for (const DoorPortal& portal : door.crossings)
+	for (std::size_t door = 0; door < grid.getDoorCount(); ++door)
+		for (const DoorPortal& portal : grid.getDoorPortals(door))
 			if (portal.inside == cell || portal.outside == cell)
 				return true;
 	return false;
+}
+
+bool ColonySimulation::isNetworkCell(Cell cell) const
+{
+	for (const BuildingRecord& building : buildings)
+		if (containsCell(building.inside_cells, cell))
+			return true;
+	return false;
+}
+
+const BuildingRecord* ColonySimulation::buildingAt(Cell cell) const
+{
+	for (const BuildingRecord& building : buildings)
+		if (containsCell(building.footprint_cells, cell))
+			return &building;
+	return nullptr;
+}
+
+bool ColonySimulation::isUsableAccess(const BuildingRecord& building, Cell cell) const
+{
+	// A dome is entered only from the base: its access cells are entrance candidates and
+	// count once they are inside (a corridor or an airlock chamber was built there).
+	const BuildingDefinition* def = findDefinition(building.type);
+	if (def && def->isDome())
+		return grid.getZone(cell) == Zone::Inside;
+	return true;
+}
+
+std::vector<Cell> ColonySimulation::usableAccessCells(const BuildingRecord& building) const
+{
+	std::vector<Cell> cells;
+	for (Cell cell : building.access_cells)
+		if (isUsableAccess(building, cell))
+			cells.push_back(cell);
+	return cells;
+}
+
+std::vector<ColonistId> ColonySimulation::occupants(BuildingId dome) const
+{
+	std::vector<ColonistId> ids;
+	if (dome == INVALID_BUILDING)
+		return ids;
+	for (const ColonistRecord& colonist : colonists)
+		if (colonist.state != ColonistState::Dead && colonist.current_dome == dome)
+			ids.push_back(colonist.id);
+	return ids;
+}
+
+void ColonySimulation::updatePresence(ColonistRecord& colonist)
+{
+	// Present inside a dome: working there (P06 adds refilling and idle waiting), standing
+	// on one of its entrances. Anything else is visible in a corridor or outside.
+	BuildingId dome = INVALID_BUILDING;
+	if (colonist.state == ColonistState::Working && colonist.reservation.active() && colonist.route.finished())
+	{
+		const BuildingRecord* building = findBuilding(colonist.reservation.building);
+		const BuildingDefinition* def = building ? findDefinition(building->type) : nullptr;
+		if (building && def && def->isDome() && containsCell(building->access_cells, colonist.last_cell) &&
+			grid.getZone(colonist.last_cell) == Zone::Inside)
+			dome = building->id;
+	}
+	colonist.current_dome = dome;
 }
 
 bool ColonySimulation::isCellReservedByColonist(Cell cell) const
@@ -639,6 +724,7 @@ void ColonySimulation::releaseReservation(ColonistRecord& colonist, const std::s
 	}
 	if (colonist.state != ColonistState::Dead)
 		colonist.state = ColonistState::Idle;
+	colonist.current_dome = INVALID_BUILDING;
 	colonist.job_retry_timer = job_retry_seconds;
 	colonist.status = "idle: " + reason;
 
@@ -685,7 +771,7 @@ bool ColonySimulation::selectJob(ColonistRecord& colonist)
 			continue;
 		for (Cell access : building.access_cells)
 		{
-			if (grid.isWalkable(access))
+			if (grid.isWalkable(access) && isUsableAccess(building, access))
 			{
 				targets.push_back(access);
 				owners.push_back(building.id);
@@ -743,6 +829,12 @@ std::string ColonySimulation::idleReason(const ColonistRecord& colonist) const
 		{
 			if (blocked.empty())
 				blocked = describeBuilding(building.id) + ": " + blocker;
+			continue;
+		}
+		if (usableAccessCells(building).empty())
+		{
+			if (blocked.empty())
+				blocked = describeBuilding(building.id) + ": no entrance (connect it to a corridor)";
 			continue;
 		}
 		return "no route to " + describeBuilding(building.id);
@@ -852,36 +944,41 @@ PlacementResult ColonySimulation::validatePlacement(BuildingType type, Cell orig
 	const BuildingDefinition* def = findDefinition(type);
 	if (!def)
 		return fail("unknown_type", "unknown building type");
-	if (def->placement != PlacementKind::Footprint)
-		return fail("wrong_placement", def->label + " is built on a door socket");
 
-	// Shared quarter-turn transform (C5): cells and access offsets rotate together.
+	// Shared quarter-turn transform (C5): cells, access offsets, inside cells and door
+	// crossings rotate together.
 	const int q = footprint::normalizeQuarterTurns(quarter_turns);
 	footprint::rotatedSize(def->footprint_width, def->footprint_height, q, result.width, result.height);
+	auto place = [&](Cell offset) {
+		const Cell rotated = footprint::rotateOffset(offset, def->footprint_width, def->footprint_height, q);
+		return Cell{ origin.x + rotated.x, origin.z + rotated.z };
+	};
 	for (int dz = 0; dz < def->footprint_height; ++dz)
 		for (int dx = 0; dx < def->footprint_width; ++dx)
-		{
-			const Cell offset = footprint::rotateOffset(Cell{ dx, dz }, def->footprint_width, def->footprint_height, q);
-			result.footprint_cells.push_back(Cell{ origin.x + offset.x, origin.z + offset.z });
-		}
+			result.footprint_cells.push_back(place(Cell{ dx, dz }));
+	for (Cell offset : def->inside_offsets)
+		result.inside_cells.push_back(place(offset));
+	for (const DoorPortal& crossing : def->crossings)
+		result.crossings.push_back(DoorPortal{ place(crossing.outside), place(crossing.inside) });
+	const bool walkable_footprint = def->hasWalkableFootprint();
+	bool access_off_map = false;
 	for (Cell access : def->access_offsets)
 	{
-		const Cell offset = footprint::rotateOffset(access, def->footprint_width, def->footprint_height, q);
-		result.access_cells.push_back(Cell{ origin.x + offset.x, origin.z + offset.z });
+		const Cell cell = place(access);
+		if (!grid.inBounds(cell))
+		{
+			// A corridor keeps the neighbours that exist; other buildings need all of them.
+			access_off_map = access_off_map || !walkable_footprint;
+			continue;
+		}
+		result.access_cells.push_back(cell);
 	}
 
 	for (Cell cell : result.footprint_cells)
 		if (!grid.inBounds(cell))
 			return fail("out_of_bounds", "the footprint leaves the map");
-	for (Cell cell : result.access_cells)
-		if (!grid.inBounds(cell))
-			return fail("access_blocked", "an access cell is outside the map");
-
-	const Zone wanted = def->zone == BuildingZone::Interior ? Zone::Inside : Zone::Outside;
-	for (const std::vector<Cell>* cells : { &result.footprint_cells, &result.access_cells })
-		for (Cell cell : *cells)
-			if (grid.getZone(cell) != wanted)
-				return fail("wrong_zone", def->label + (wanted == Zone::Inside ? " must be built inside the base" : " must be built outside the base"));
+	if (access_off_map)
+		return fail("access_blocked", "an access cell is outside the map");
 
 	// Deposits: only a mine may cover one, and it must cover exactly one free deposit of
 	// its own resource; that deposit cell becomes part of its footprint (C5).
@@ -910,64 +1007,84 @@ PlacementResult ColonySimulation::validatePlacement(BuildingType type, Cell orig
 
 	for (Cell cell : result.footprint_cells)
 	{
-		if (isDoorCell(cell))
-			return fail("door_cells", "the footprint covers Exit Door crossing cells");
+		if (const BuildingRecord* other = buildingAt(cell))
+			return fail("occupied", "the footprint overlaps " + describeBuilding(other->id) + " at " + cellText(cell));
 		for (const InitialColonistDefinition& spawn : scenario.initial_colonists)
-			if (spawn.cell == cell)
+			if (spawn.cell == cell && !walkable_footprint) // colonists may start in a corridor
 				return fail("spawn_cell", "the footprint covers a colonist spawn cell " + cellText(cell));
 		const bool own_deposit = result.deposit_index && scenario.deposits[*result.deposit_index].cell == cell;
 		if (grid.isBlocked(cell) && !own_deposit)
-			return fail("occupied", "the footprint overlaps a building or a blocked cell at " + cellText(cell));
+			return fail("occupied", "the footprint overlaps a blocked cell at " + cellText(cell));
 	}
+	// Access cells of other buildings stay free, except that a corridor may run over a
+	// dome's entrance candidates (that is how a dome gets its entrance) and over another
+	// corridor's neighbours. A completed corridor needs no access cell any more.
 	for (const BuildingRecord& other : buildings)
-		for (Cell access : other.access_cells)
-			if (containsCell(result.footprint_cells, access))
-				return fail("blocks_access", "it would cover an access cell of " + describeBuilding(other.id));
-	for (const ColonistRecord& colonist : colonists)
 	{
-		if (colonist.state == ColonistState::Dead)
+		const BuildingDefinition* other_def = findDefinition(other.type);
+		const bool other_corridor = other_def && other_def->placement == PlacementKind::Corridor;
+		if (other_corridor && other.isComplete())
 			continue;
-		if (containsCell(result.footprint_cells, colonist.last_cell) ||
-			(!colonist.route.finished() && containsCell(result.footprint_cells, colonist.route.cells[colonist.route.next_index])))
-			return fail("colonist_in_the_way", colonist.name + " is standing there");
+		const bool corridor_allowed = def->placement == PlacementKind::Corridor && other_def && (other_def->isDome() || other_corridor);
+		for (Cell access : other.access_cells)
+			if (containsCell(result.footprint_cells, access) && !corridor_allowed)
+				return fail("blocks_access", "it would cover an access cell of " + describeBuilding(other.id));
 	}
-	for (Cell access : result.access_cells)
-		if (grid.isBlocked(access))
-			return fail("access_blocked", "access cell " + cellText(access) + " is blocked");
-
-	result.valid = true;
-	result.code = "ok";
-	result.reason = "valid placement";
-	return result;
-}
-
-PlacementResult ColonySimulation::validateDoorPlacement(std::size_t door_index) const
-{
-	PlacementResult result;
-	result.code = "unknown_socket";
-	result.reason = "unknown door socket";
-	if (!findDefinition(BuildingType::ExitDoor))
-	{
-		result.code = "unknown_type";
-		result.reason = "buildings.json has no Exit Door";
-		return result;
-	}
-	if (door_index >= scenario.exit_doors.size() || door_index >= grid.getDoorCount())
-		return result;
-	for (const BuildingRecord& other : buildings)
-		if (other.door_index == door_index)
+	if (!walkable_footprint)
+		for (const ColonistRecord& colonist : colonists)
 		{
-			result.code = "socket_taken";
-			result.reason = "the socket already has " + describeBuilding(other.id);
-			return result;
+			if (colonist.state == ColonistState::Dead)
+				continue;
+			if (containsCell(result.footprint_cells, colonist.last_cell) ||
+				(!colonist.route.finished() && containsCell(result.footprint_cells, colonist.route.cells[colonist.route.next_index])))
+				return fail("colonist_in_the_way", colonist.name + " is standing there");
 		}
-	// The crossing cells are the door's access cells (outside first: the first Door is
-	// built from the exterior side, P07).
-	for (const DoorPortal& portal : scenario.exit_doors[door_index].crossings)
-		result.access_cells.push_back(portal.outside);
-	for (const DoorPortal& portal : scenario.exit_doors[door_index].crossings)
-		result.access_cells.push_back(portal.inside);
-	result.door_index = door_index;
+
+	// The base network (C5): corridors grow from the network, domes need an entrance
+	// candidate on it, and everything else keeps its cells off it.
+	auto onNetwork = [this](Cell cell) { return isNetworkCell(cell) || grid.getZone(cell) == Zone::Inside; };
+	if (def->placement == PlacementKind::Corridor)
+	{
+		bool joined = false;
+		const Cell cell = result.footprint_cells.front();
+		for (const Cell neighbour : { Cell{ cell.x + 1, cell.z }, Cell{ cell.x - 1, cell.z }, Cell{ cell.x, cell.z + 1 }, Cell{ cell.x, cell.z - 1 } })
+			joined = joined || isNetworkCell(neighbour);
+		if (!joined)
+			return fail("needs_network", "a corridor must join the base: build it next to an Exit Door chamber or another corridor");
+	}
+	else if (def->isDome())
+	{
+		bool entrance = false;
+		for (Cell access : result.access_cells)
+			entrance = entrance || isNetworkCell(access);
+		if (!entrance)
+			return fail("needs_network", def->label + " needs an entrance on a corridor or an Exit Door chamber");
+	}
+	else
+	{
+		// Exterior buildings and the airlock's own access cells stay outside the network.
+		for (Cell access : result.access_cells)
+			if (onNetwork(access))
+				return fail("on_network", def->label + " must be reached from outside the base");
+		if (def->zone == BuildingZone::Exterior)
+			for (Cell cell : result.footprint_cells)
+				if (onNetwork(cell))
+					return fail("on_network", def->label + " must be built outside the base");
+	}
+
+	// Access cells must be walkable: every one for a blocked footprint, at least one for a
+	// corridor or an airlock (built from any free neighbour).
+	bool any_walkable = false;
+	for (Cell access : result.access_cells)
+	{
+		const bool walkable = grid.isWalkable(access) && !containsCell(result.footprint_cells, access);
+		any_walkable = any_walkable || walkable;
+		if (!walkable && !walkable_footprint)
+			return fail("access_blocked", "access cell " + cellText(access) + " is blocked");
+	}
+	if (!any_walkable)
+		return fail("access_blocked", def->label + " has no free access cell");
+
 	result.valid = true;
 	result.code = "ok";
 	result.reason = "valid placement";
@@ -987,16 +1104,21 @@ BuildingId ColonySimulation::addCompleteBuilding(BuildingType type, const Placem
 	building.height = placement.height;
 	building.footprint_cells = placement.footprint_cells;
 	building.access_cells = placement.access_cells;
-	building.door_index = placement.door_index;
+	building.inside_cells = placement.inside_cells;
+	building.crossings = placement.crossings;
 	building.deposit_index = placement.deposit_index;
 	building.slots.assign(def && def->has_operation ? static_cast<std::size_t>(def->operation_slots) : 0u, INVALID_COLONIST);
 
-	// Footprints block their cells (each change bumps the grid revision); a completed
-	// Exit Door opens its socket.
-	for (Cell cell : building.footprint_cells)
-		grid.setBlocked(cell, true);
-	if (building.door_index)
-		grid.setDoorOpen(*building.door_index, true);
+	// Completion effects (C5): domes and exterior buildings block their footprint;
+	// corridors and airlocks turn their inside cells inside, and an airlock registers its
+	// crossings as one open door. Each change bumps the grid revision, so routes replan.
+	if (!def || !def->hasWalkableFootprint())
+		for (Cell cell : building.footprint_cells)
+			grid.setBlocked(cell, true);
+	for (Cell cell : building.inside_cells)
+		grid.setZone(cell, Zone::Inside);
+	if (!building.crossings.empty())
+		building.door_index = grid.addDoor(building.crossings, true);
 
 	buildings.push_back(building);
 	++work_revision;
@@ -1036,13 +1158,19 @@ void ColonySimulation::updateProduction(BuildingRecord& building, float dt)
 		building.status_text = "disabled";
 		return;
 	}
+	const bool no_entrance = def->isDome() && usableAccessCells(building).empty();
 	if (!def->recipe)
 	{
 		building.status = BuildingStatus::Idle;
 		if (def->storage_capacity > 0)
-			building.status_text = "+" + std::to_string(def->storage_capacity) + " item capacity";
+			building.status_text = "+" + std::to_string(def->storage_capacity) + " item capacity" +
+				(no_entrance ? "; no entrance yet (connect it to a corridor)" : "");
 		else if (building.door_index)
 			building.status_text = grid.isDoorOpen(*building.door_index) ? "door open" : "door closed";
+		else if (def->placement == PlacementKind::Corridor)
+			building.status_text = "corridor (inside)";
+		else if (no_entrance)
+			building.status_text = "no entrance (connect it to a corridor)";
 		else
 			building.status_text = "complete (utilities arrive in P06)";
 		return;
@@ -1065,7 +1193,8 @@ void ColonySimulation::updateProduction(BuildingRecord& building, float dt)
 	if (rate == 0)
 	{
 		building.status = BuildingStatus::NoWorkers;
-		building.status_text = std::string("no ") + roleName(def->operation_role) + " present";
+		building.status_text = no_entrance ? std::string("no entrance (connect it to a corridor)")
+			: std::string("no ") + roleName(def->operation_role) + " present";
 		return;
 	}
 

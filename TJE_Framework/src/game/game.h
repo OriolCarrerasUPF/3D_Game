@@ -62,8 +62,12 @@ public:
 
 	// scenario_path: scenario.json to start (main.cpp: --scenario <path>, P05). The
 	// default is the shipped start; dev/test scenarios live in data/arkfall/dev/.
+	// scene_path: static visual scene (main.cpp: --scene <path>); dev scenes, such as
+	// the base-module preview, also live in data/arkfall/dev/.
 	static constexpr const char* default_scenario_path = "data/arkfall/scenario.json";
-	Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path = default_scenario_path);
+	static constexpr const char* default_scene_path = "data/arkfall/scene.json";
+	Game(int window_width, int window_height, SDL_Window* window, const std::string& scenario_path = default_scenario_path,
+		const std::string& scene_path = default_scene_path);
 	~Game();
 
 	//main functions
@@ -101,7 +105,6 @@ private:
 	void cancelCurrent(bool from_escape);
 	void setSpeedLevel(int level);
 	void togglePause();
-	bool isDoorCell(Cell cell) const;
 	ColonistId getDebugColonist() const;
 	HudInfo makeHudInfo() const;
 

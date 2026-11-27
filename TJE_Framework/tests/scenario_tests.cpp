@@ -1,5 +1,5 @@
-// P03 data acceptance: ScenarioLoader, scene/scenario blocker agreement and the
-// colonist role catalog.
+// P03 data acceptance (updated for P05B: no base block, corridor strips): ScenarioLoader,
+// scene/scenario blocker agreement and the colonist role catalog.
 
 #include "test_harness.h"
 
@@ -12,17 +12,12 @@ namespace
 {
 	using json_data::Json;
 
-	// Small valid scenario: 16x16 grid, base x=5..10 z=5..10, door (4,7)->(5,7).
+	// Small valid scenario: 16x16 grid, no predefined base (P05B).
 	Json validScenario()
 	{
 		return Json::parse(R"({
 			"schemaVersion": 1,
 			"grid": { "width": 16, "height": 16, "cellSize": 1.0, "originXZ": [-8, -8] },
-			"base": {
-				"interior": { "min": [5, 5], "max": [10, 10] },
-				"exitDoors": [ { "id": "door", "openAtStart": true,
-					"crossings": [ { "outside": [4, 7], "inside": [5, 7] } ] } ]
-			},
 			"deposits": [ { "id": "iron", "resource": "iron", "cell": [1, 1] } ],
 			"staticBlockers": [ { "id": "crate", "min": [7, 7], "max": [8, 8] } ],
 			"initialColonists": [ { "id": 1, "job": "miner", "cell": [2, 7],
@@ -65,9 +60,6 @@ TEST_CASE("scenario: valid document loads into typed records")
 	const ScenarioDefinition& s = result.scenario;
 	CHECK_EQ(s.grid.width, 16);
 	CHECK_NEAR(s.grid.origin_x, -8.0, 1e-6);
-	CHECK(s.interior_min == (Cell{ 5, 5 }));
-	CHECK_EQ(s.exit_doors.size(), static_cast<std::size_t>(1));
-	CHECK(s.exit_doors[0].crossings[0].inside == (Cell{ 5, 7 }));
 	CHECK(s.deposits[0].type == DepositType::Iron);
 	CHECK(s.initial_colonists[0].job == Job::Miner);
 	CHECK_NEAR(s.initial_colonists[0].needs.oxygen, 80.0, 1e-6);
@@ -76,7 +68,9 @@ TEST_CASE("scenario: valid document loads into typed records")
 	const NavigationGrid grid = buildNavigationGrid(s);
 	CHECK(grid.isBlocked(Cell{ 1, 1 }));
 	CHECK(grid.isBlocked(Cell{ 8, 8 }));
-	CHECK(grid.getZone(Cell{ 5, 5 }) == Zone::Inside);
+	// Every cell starts outside: inside cells and doors come from buildings (P05B).
+	CHECK(grid.getZone(Cell{ 5, 5 }) == Zone::Outside);
+	CHECK_EQ(grid.getDoorCount(), static_cast<std::size_t>(0));
 	CHECK(grid.canStep(Cell{ 4, 7 }, Cell{ 5, 7 }));
 }
 
@@ -121,40 +115,13 @@ TEST_CASE("scenario: rejects out-of-grid and duplicate data")
 	doc["initialColonists"].push_back(doc["initialColonists"][0]);
 	expectError(doc, "/initialColonists/1/id", "duplicate colonist");
 
+	// The P03 base block is gone: it is now an unknown field.
 	doc = validScenario();
-	doc["base"]["interior"]["min"] = Json::array({ 0, 5 });
-	expectError(doc, "/base/interior", "no exterior margin");
+	doc["base"] = Json::object();
+	expectError(doc, "/base", "removed base block");
 }
 
-TEST_CASE("scenario: rejects invalid door crossings")
-{
-	Json doc = validScenario();
-	doc["base"]["exitDoors"][0]["crossings"][0]["outside"] = Json::array({ 3, 7 });
-	expectError(doc, "/crossings/0", "not neighbours");
-
-	doc = validScenario();
-	doc["base"]["exitDoors"][0]["crossings"][0] = Json::parse(R"({ "outside": [5, 7], "inside": [4, 7] })");
-	expectError(doc, "/crossings/0/outside", "zones swapped");
-
-	doc = validScenario();
-	doc["base"]["exitDoors"][0]["crossings"].push_back(Json::parse(R"({ "outside": [4, 9], "inside": [5, 9] })"));
-	expectError(doc, "/crossings", "not contiguous");
-
-	doc = validScenario();
-	doc["base"]["exitDoors"][0]["crossings"].push_back(Json::parse(R"({ "outside": [7, 4], "inside": [7, 5] })"));
-	expectError(doc, "/crossings/1", "different sides");
-
-	doc = validScenario();
-	doc["base"]["exitDoors"] = Json::array();
-	expectError(doc, "/base/exitDoors", "no door");
-
-	doc = validScenario();
-	doc["staticBlockers"][0]["min"] = Json::array({ 5, 7 });
-	doc["staticBlockers"][0]["max"] = Json::array({ 5, 7 });
-	expectError(doc, "/base/exitDoors/0", "door cell blocked");
-}
-
-TEST_CASE("scenario: rejects impossible starts and unreachable routes")
+TEST_CASE("scenario: rejects impossible starts")
 {
 	Json doc = validScenario();
 	doc["initialColonists"][0]["cell"] = Json::array({ 1, 1 });
@@ -163,10 +130,6 @@ TEST_CASE("scenario: rejects impossible starts and unreachable routes")
 	doc = validScenario();
 	doc["debugRoute"]["stops"][0]["cell"] = Json::array({ 8, 8 });
 	expectError(doc, "/debugRoute/stops/0/cell", "stop on blocker");
-
-	doc = validScenario();
-	doc["base"]["exitDoors"][0]["openAtStart"] = false;
-	expectError(doc, "/debugRoute/stops/1/cell", "route through closed door");
 
 	doc = validScenario();
 	doc["debugRoute"]["colonistId"] = 7;
@@ -223,12 +186,12 @@ TEST_CASE("scenario: shipped scenario.json, scene.json and colonists.json agree"
 	DataLoadError error;
 	CHECK(ScenarioLoader::validateSceneBlockers(scenario.scenario, scene.instances, "data/arkfall/scene.json", error));
 
-	// The P03 route crosses the 2-cell west door: (23,31)->(24,31) and (23,32)->(24,32).
+	// P05B: the shipped start has no base, no door and no debug route.
 	const NavigationGrid grid = buildNavigationGrid(scenario.scenario);
-	CHECK(grid.canStep(Cell{ 23, 31 }, Cell{ 24, 31 }));
-	CHECK(grid.canStep(Cell{ 23, 32 }, Cell{ 24, 32 }));
-	CHECK(!grid.canStep(Cell{ 23, 30 }, Cell{ 24, 30 }));
-	CHECK(!grid.canStep(Cell{ 30, 23 }, Cell{ 30, 24 }));
+	CHECK_EQ(grid.getDoorCount(), static_cast<std::size_t>(0));
+	CHECK(grid.getZone(Cell{ 32, 32 }) == Zone::Outside);
+	CHECK(!scenario.scenario.debug_route.has_value());
+	CHECK(scenario.scenario.initial_buildings.empty());
 
 	ColonistCatalog roles;
 	const ColonistCatalogLoadResult role_result = roles.load("data/arkfall/colonists.json");
@@ -242,7 +205,8 @@ TEST_CASE("scenario: P05 start state (inventory, cargo capacity, initial buildin
 	Json doc = validScenario();
 	doc["initialInventory"] = Json::parse(R"({ "steel": 60, "components": 20, "vegetables": 20 })");
 	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [6, 6], "quarterTurns": 1 },
-		{ "type": "exit_door", "socket": "door" } ])");
+		{ "type": "exit_door", "origin": [2, 10], "quarterTurns": 3 },
+		{ "type": "corridor", "from": [5, 11], "to": [8, 10] } ])");
 	const ScenarioLoadResult result = parse(doc);
 	CHECK(result);
 	if (!result)
@@ -254,12 +218,24 @@ TEST_CASE("scenario: P05 start state (inventory, cargo capacity, initial buildin
 	CHECK_EQ(s.initial_inventory[ResourceType::Steel], 60);
 	CHECK_EQ(s.initial_inventory[ResourceType::Aurite], 0);
 	CHECK_EQ(s.cargo_capacity, 100);
-	CHECK_EQ(s.initial_buildings.size(), static_cast<std::size_t>(2));
-	CHECK(!s.initial_buildings[0].on_socket);
+	CHECK_EQ(s.initial_buildings.size(), static_cast<std::size_t>(3));
+	CHECK(!s.initial_buildings[0].is_strip);
 	CHECK(s.initial_buildings[0].origin == (Cell{ 6, 6 }));
 	CHECK_EQ(s.initial_buildings[0].quarter_turns, 1);
-	CHECK(s.initial_buildings[1].on_socket);
-	CHECK_EQ(s.initial_buildings[1].socket_id, std::string("door"));
+	CHECK(!s.initial_buildings[1].is_strip);
+	CHECK_EQ(s.initial_buildings[1].quarter_turns, 3);
+	CHECK(s.initial_buildings[2].is_strip);
+	CHECK(s.initial_buildings[2].strip_from == (Cell{ 5, 11 }));
+	// A strip expands row by row (2 cells across) from `from` towards `to`.
+	const std::vector<Cell> cells = corridorStripCells(s.initial_buildings[2].strip_from, s.initial_buildings[2].strip_to);
+	CHECK_EQ(cells.size(), static_cast<std::size_t>(8));
+	CHECK(cells[0] == (Cell{ 5, 11 }));
+	CHECK(cells[1] == (Cell{ 5, 10 }));
+	CHECK(cells[2] == (Cell{ 6, 11 }));
+	CHECK(cells[7] == (Cell{ 8, 10 }));
+	const std::vector<Cell> along_z = corridorStripCells(Cell{ 3, 2 }, Cell{ 4, 4 });
+	CHECK_EQ(along_z.size(), static_cast<std::size_t>(6));
+	CHECK(along_z[0] == (Cell{ 3, 2 }) && along_z[1] == (Cell{ 4, 2 }) && along_z[2] == (Cell{ 3, 3 }));
 }
 
 TEST_CASE("scenario: rejects bad start state fields")
@@ -289,12 +265,28 @@ TEST_CASE("scenario: rejects bad start state fields")
 	expectError(doc, "/initialBuildings/0/quarterTurns", "origin without quarterTurns");
 
 	doc = validScenario();
-	doc["initialBuildings"] = Json::parse(R"([ { "type": "exit_door", "socket": "door", "origin": [6, 6], "quarterTurns": 0 } ])");
-	expectError(doc, "/initialBuildings/0", "both origin and socket");
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [6, 6], "to": [8, 7], "origin": [6, 6], "quarterTurns": 0 } ])");
+	expectError(doc, "/initialBuildings/0", "both origin and strip");
 
 	doc = validScenario();
-	doc["initialBuildings"] = Json::parse(R"([ { "type": "exit_door", "socket": "north_door" } ])");
-	expectError(doc, "/initialBuildings/0/socket", "unknown socket");
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [6, 6] } ])");
+	expectError(doc, "/initialBuildings/0/to", "strip without to");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [6, 6], "to": [9, 8] } ])");
+	expectError(doc, "/initialBuildings/0", "strip 3 cells wide");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [6, 6], "to": [9, 6] } ])");
+	expectError(doc, "/initialBuildings/0", "strip 1 cell wide");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "from": [6, 6], "to": [9, 7] } ])");
+	expectError(doc, "/initialBuildings/0/type", "strip of a non-corridor");
+
+	doc = validScenario();
+	doc["initialBuildings"] = Json::parse(R"([ { "type": "corridor", "from": [6, 6], "to": [16, 7] } ])");
+	expectError(doc, "/initialBuildings/0/to/0", "strip out of grid");
 
 	doc = validScenario();
 	doc["initialBuildings"] = Json::parse(R"([ { "type": "storage", "origin": [16, 6], "quarterTurns": 0 } ])");

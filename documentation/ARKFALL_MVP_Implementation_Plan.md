@@ -1,8 +1,8 @@
 # ARKFALL: MVP Implementation Plan
 
-**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04) · **Status update:** 25 November 2026 (P05 done)  
+**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04) · **Status update:** 25 November 2026 (P05 done) · **Base layout change:** 27 November 2026 (domes joined by corridors, new step P05B)  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P05 are implemented (step reports in `steps_reports/`: [P03_navigation_report.md](steps_reports/P03_navigation_report.md), [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md), [P05_production_report.md](steps_reports/P05_production_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](steps_reports/P02_asset_report.md), and the plan review of the same day is summarised in the next section.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P05 are implemented (step reports in `steps_reports/`: [P03_navigation_report.md](steps_reports/P03_navigation_report.md), [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md), [P05_production_report.md](steps_reports/P05_production_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](steps_reports/P02_asset_report.md). The base layout change of 27 November 2026 and the plan review of 24 November are summarised in the next two sections.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
@@ -19,6 +19,28 @@ Sections A2–A4 describe the framework baseline inspected on 8 November, before
 - Source paths are relative to the repository root unless stated otherwise. Proposed implementation files are rooted in `TJE_Framework/`.
 - All new classes and contracts below are proposals unless explicitly identified as existing.
 
+## Base layout change of 27 November 2026 (before P06)
+
+**Team decision:** the base is no longer one fixed rectangle surrounded by walls. As in Planet Base, every interior building is its own closed dome, and the crew joins the domes with corridors. To keep the change affordable, the inside of a dome is not simulated as walkable space:
+
+- A dome is a solid, static model. Its footprint blocks navigation exactly like a P05 building footprint.
+- A colonist who reaches a dome entrance to work, eat, drink or wait is hidden. The simulation records which dome the colonist is in, and the dome popup lists everyone inside and what they are doing.
+- Corridors are roofless and visible, so colonists can be seen walking between the Exit Door and the domes.
+
+Consequences, each applied in the section named:
+
+1. **Inside is built, not fixed (C5, C9.1).** Every cell starts outside. A completed Corridor cell, or a chamber cell of a completed Exit Door, becomes inside. `scenario.json` loses `base.interior` and `base.exitDoors`, and `scene.json` loses the boundary walls, interior floor and door gate.
+2. **Corridor building (A6, B1, C8).** Corridor is the only building type added to the MVP's 13. Each record is one walkable 1×1 cell that costs 1 Steel and takes 3 s to build, with no operation. Corridors are **2 cells wide**: the build tool lays 2-cell strips in straight lines, so a metre of corridor is two records.
+3. **Exit Door as an airlock (C5, C8).** The Exit Door is no longer built on a fixed socket. It is a 2×3 walkable building placed anywhere outside. Its front row is an outside apron; the two edges between the apron and the chamber are the door crossings; the two chamber rows become inside when it completes and open onto a corridor. It is 2 cells wide, like the corridors.
+4. **Domes (C5, C8).** Interior buildings are placed on outside cells next to the base. Their access offsets become entrance candidates, and a candidate on an inside cell is an entrance. Placement needs at least one candidate on a Corridor or Exit Door chamber cell. Work, services and idle waiting use entrances only.
+5. **Hidden presence (C2, C6).** A colonist who is present at a dome entrance (working, refilling or waiting) is hidden and counts as inside that dome. Oxygen coverage still counts every living colonist on an inside cell, so the indoor oxygen rules keep their meaning.
+6. **Visuals (A5, C5.2).** The Exit Door and the corridor pieces are team-authored Blender models sized for the 1.10 × 1.80 m astronaut: a 1.76 m clear corridor width, 2.20 m clear height and a 1.40 × 2.10 m door. The view places corridor floors, walls, roof arches and junction caps from the inside cells with fixed rules (C5.2) and draws colonists on the passage axis. Interior buildings use a closed dome shell per footprint size at the same scale, tinted per type, with the current machine model as a rooftop marker. These are `buildings.json` visual data, not code.
+7. **New step P05B (D).** It goes between P05 and P06, because P06's oxygen, suit-refill and idle rules depend on which cells are inside. P06, P07 and P09 are adjusted: P07 adds corridor drag placement and the check that corridors never enclose part of the exterior.
+
+**What stays:** the grid, BFS, revisions and door crossings; footprints and the quarter-turn transform; reservations, production and inventory; the global power, water and oxygen numbers; the camera, picking and popups. `NavigationGrid` already stores a zone per cell and doors as crossings, and P05 footprints already block their cells with work at adjacent access cells. The change therefore adds a per-cell zone setter, doors registered at completion, the Corridor type, the corridor view rules and a hidden flag in the view.
+
+**Already done on 27 Nov 2026 (before P05B):** the airlock and corridor models (`tools/blender/build_base_modules.py`, `tools/blender/arkfall_base_modules.blend`, exported to `data/arkfall/models/`), their `assets.json` entries, the reference view rules (`tools/base_layout_rules.py`), a `--scene <path>` command-line option and a static dev preview, later replaced by the real base in P05B (`dev/base_layout.json`).
+
 ## Review of 24 November 2026 (before P04)
 
 The whole plan was re-checked against the MVP Scope, the GDD and the code on `main` after P03. The product described in B1 and F3 still delivers exactly the MVP Scope: one roofless map with visible iron and copper; pan, rotate and zoom; autonomous Engineers, Miners and Farmers taking the nearest free job; Hunger, Thirst and Oxygen (refill at 20, death at 0); the 13 buildings; power, water and oxygen as global numbers; ore straight into Storage; Landing Pad calls bringing 10 colonists; victory with a completed Haven Beacon (300 Aurite) and 100 living colonists; defeat when everyone on the surface is dead; build menu, resource bar, building popup and colonist popup with need bars. The corrections below remove contradictions and gaps that would have blocked later steps. Each one is applied in the section named.
@@ -32,6 +54,7 @@ The whole plan was re-checked against the MVP Scope, the GDD and the code on `ma
 | P03 | Done | [P03_navigation_report.md](steps_reports/P03_navigation_report.md); 52 headless test cases pass in Debug. |
 | P04 | Done | [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md); 69 headless test cases pass in Debug. |
 | P05 | Done | [P05_production_report.md](steps_reports/P05_production_report.md); 95 headless test cases pass (Linux g++ headless build). |
+| P05B | Done | [P05B_base_layout_report.md](steps_reports/P05B_base_layout_report.md); 102 headless test cases pass (Windows Debug). |
 | P06 | Next | — |
 | P07–P11 | Pending | — |
 
@@ -204,8 +227,9 @@ All source candidates below are under `assests/Models/OBJ format/`.
 |---|---|---|
 | Colonist | `astronautA.obj` | Uniform scale; role tint; rigid movement initially. |
 | Ground | `terrain.obj` or generated plane | Red palette and map boundary. |
-| Interior floor | `platform_large.obj` | Modular arrangement without roof. |
-| Exit Door | `gate_simple.obj` | Match visual doorway to navigation portal. |
+| Corridor | Team-authored `corridor_floor`, `corridor_wall_frame`, `corridor_arch`, `corridor_junction` (done 27 Nov) | Placed by the view rules of C5.2; open arched roof, so colonists stay visible. |
+| Dome shell | Team-authored closed dome OBJ/MTL, one per footprint size (2×2, 3×3) | Wraps every interior building at the C5.2 scale (about 2.5–3 m high); tinted per type through `materials.json`; the machine model below sits on top as a small marker. The Greenhouse may keep `greenhouse_dome.obj` only if it is scaled up to that height. |
+| Exit Door | Team-authored `airlock` (done 27 Nov) | 2×3 airlock with apron, outer door, chamber and inner frame (C5.2). Replaces `gate_simple.obj` / `gate_complex.obj`. |
 | Storage | `barrels.obj` | Footprint and clear label. |
 | Oxygenator | `machine_barrel.obj` | Label/color distinction. |
 | Water Extractor | `machine_generator.obj` | Label/color distinction. |
@@ -223,7 +247,7 @@ These are mappings, not claims that the kit contains finished ARKFALL buildings.
 
 The source pack has 153 OBJ models. The table below measures the axis-aligned extents of every source OBJ model, in source coordinates and Y-up order (X × Y × Z). These raw values are not asserted to be physical metres; the plan maps them to metres by applying the proposed uniform scale. The proposed uniform scale is a visual starting point, not a gameplay footprint. Scale 1.00 deliberately preserves modular pieces, vehicles and decorative variants; small props are allowed to stay smaller than a 1 m cell. Where a model has a specific gameplay use, use its explicit target scale in the following table. Building footprints remain authoritative for occupancy.
 
-The overrides make the building visuals fill roughly 80–85% of their 2×2 m logical footprint where the source model is a compact machine or storage cluster. They do not change the 1 m terrain cell or the 2×2 m floor module. The Exit Door gate keeps catalog scale 1; the scene scales it to the door width (2 m for the 2-cell west door). Composite buildings apply component scales in their building visual definition so the same model can be used at different sizes without changing its source mesh.
+The overrides make the building visuals fill roughly 80–85% of their 2×2 m logical footprint where the source model is a compact machine or storage cluster. They do not change the 1 m terrain cell or the 1×1 m corridor floor. Since P05B, interior buildings are drawn inside a closed dome shell and their machine model becomes a smaller rooftop marker; those scales are set in `buildings.json`. The airlock and corridor modules are authored at true scale (C5.2) and keep catalog scale 1. Composite buildings apply component scales in their building visual definition so the same model can be used at different sizes without changing its source mesh.
 
 | OBJ asset | Source dimensions X × Y × Z (source units) | Proposed uniform scale | Vertex count |
 |---|---:|---:|---:|
@@ -394,10 +418,11 @@ Proposed gameplay visual scales and resulting world-space bounds (m):
 | Copper deposit (`rock_crystals.obj`) | 0.8509 × 0.3375 × 0.8015 | 1.9 | 1.6168 × 0.6413 × 1.5228 | 1.6–1.7 m deposit marker |
 | Haven Beacon core (`machine_wireless.obj`) | 0.75 × 0.6 × 0.5 | 3 | 2.25 × 1.8 × 1.5 | 4×4 landmark composition |
 | Haven Beacon dish (`satelliteDish_large.obj`) | 0.8487 × 0.8142 × 0.7369 | 3 | 2.5461 × 2.4426 × 2.2106 | 4×4 landmark composition |
-| Exit Door (`gate_simple.obj`) | 1 × 1.08 × 0.5 | 1 (catalog) × 2 (scene instance) | 2 × 2.16 × 1 | 2-cell door: 2 m wide, the 1.8 m colonist fits under it |
-| Static base wall (`corridor_wall.obj`) | 0.1 × 0.8 × 1 | 1 | 0.1 × 0.8 × 1 | 1 m boundary segment; retain module fit |
+| Exit Door (`airlock.obj`, team-authored) | 2 × 3.19 × 2.95 | 1 | 2 × 3.19 × 2.95 | 2×3 airlock (27 Nov); 1.40 × 2.10 m door for the 1.10 × 1.80 m colonist (C5.2) |
+| Corridor wall (`corridor_wall_frame.obj`, team-authored) | 0.12 × 2.42 × 1 | 1 | 0.12 × 2.42 × 1 | 1 m wall segment on a corridor edge that faces the outside (C5.2) |
+| Corridor arch / junction (`corridor_arch.obj`, `corridor_junction.obj`) | 2 × 0.62 × 0.08 / 2.12 × 3.12 × 2.12 | 1 | same | roof over a straight 2-cell row / over a 2×2 junction block (C5.2) |
 | Terrain (`terrain.obj`) | 1 × 0 × 1 | 1 | 1 × 0 × 1 | 1×1 m terrain cell; retain current fit |
-| Interior floor module (`platform_large.obj`) | 2 × 0.1 × 2 | 1 | 2 × 0.1 × 2 | 2×2 m visual module; retain current fit |
+| Corridor floor (`corridor_floor.obj`, team-authored) | 1 × 0.1 × 1 | 1 | 1 × 0.1 × 1 | 1×1 m floor under each corridor cell (replaces the 2×2 `platform_large` interior floor, P05B) |
 | Human-scale furniture (if selected) (`desk_chair.obj`) | 0.15 × 0.2938 × 0.15 | 2.72 | 0.408 × 0.799 × 0.408 | about 0.8 m chair height |
 | Human-scale furniture (if selected) (`desk_chairArms.obj`) | 0.25 × 0.3438 × 0.15 | 2.33 | 0.5825 × 0.8009 × 0.3495 | about 0.8 m chair height |
 | Human-scale furniture (if selected) (`desk_chairStool.obj`) | 0.15 × 0.1688 × 0.15 | 2.67 | 0.4005 × 0.4506 × 0.4005 | about 0.45 m stool height |
@@ -419,7 +444,8 @@ Every asset with scale 1.00 in the inventory keeps its source size. This is inte
 | Starting resources, rates, footprints and construction times are unspecified | Use the explicit provisional tuning below; keep it centralized. |
 | GDD starts with no base | Start with no constructed buildings and a finite landing-cargo inventory. |
 | MVP postpones lore; T19 requires completeness | Separate the playable MVP from the academic delivery gate. A simple title/help screen is sufficient initially; narrative presentation remains later. |
-| GDD: the crew builds the sealed base from nothing; the MVP building list has no wall or corridor building | The base perimeter is a pre-placed shell (the scenario's interior rectangle). Only the Exit Door, on a door socket, and the interior buildings are constructed. |
+| GDD: the crew builds the sealed base from nothing; the MVP building list has no wall or corridor building | **Team decision (27 Nov 2026), replacing the pre-placed rectangle:** the crew builds the base as separate domes joined by corridors, in the style of Planet Base. Corridor is the only building added to the MVP's 13; it has no operation. |
+| MVP "one roofless map" versus closed domes | The map and the corridors have no roof, so colonists walking between buildings stay visible. Domes are closed shells: a colonist inside one is hidden and listed in its popup. Visible dome interiors (roof fading) stay deferred. |
 | GDD: suits refill at a powered door, but passage is not tied to power | An unpowered Exit Door can still be crossed; only the suit refill needs power and base oxygen. |
 | Neither the MVP nor the GDD's MVP subset says where colonists drink (the GDD's Water Deposit is deferred) | Storage access cells serve food and water (`eat`/`drink` services in `buildings.json`); water comes from the global flow. |
 | MVP "Haven Beacon built" gives the Beacon no operating function | The Beacon draws no power, so completing it cannot cause a brownout. |
@@ -433,8 +459,8 @@ Every asset with scale 1.00 in the inventory keeps its source size. This is inte
 |---|---|---|---|---|
 | **MVP-01** | One roofless map; both deposit types visible immediately | MVP p. 1 | Map, terrain, deposits | New run exposes iron and copper without scouting. |
 | **MVP-02** | Pan, rotate and zoom the strategy camera | MVP p. 1; GDD p. 9 | Camera/input | Controls remain usable at zoom limits and after resize. |
-| **MVP-03** | Select colonists/buildings and inspect them | MVP pp. 1–2 | Picking, UI | Nearest visible clicked object opens the correct popup. |
-| **MVP-04** | Place all 13 building types | MVP p. 1 | Build menu, placement, Engineer construction | Valid paid blueprints are completed by Engineers; invalid placements explain rejection. |
+| **MVP-03** | Select colonists/buildings and inspect them | MVP pp. 1–2 | Picking, UI | Nearest visible clicked object opens the correct popup; colonists inside a dome are selected from its occupant list. |
+| **MVP-04** | Place all 13 building types, and the corridors that join the domes | MVP p. 1; team decision 27 Nov 2026 | Build menu, placement, Engineer construction | Valid paid blueprints are completed by Engineers; invalid placements explain rejection. |
 | **MVP-05** | Colonists move autonomously and take nearest free eligible jobs | MVP p. 1 | Navigation, reservations, AI | Workers route around obstacles and never exceed job capacity. |
 | **MVP-06** | Assign Engineer, Miner or Farmer through colonist popup | MVP p. 1 | UI commands, task reassignment | Changing role releases the previous task and updates appearance/status. |
 | **MVP-07** | Hunger, Thirst and Oxygen trigger refill at 20; zero is fatal | MVP p. 1 | Needs, services, death | Workers interrupt work, seek valid services and die if a lethal need reaches zero. |
@@ -502,7 +528,7 @@ Proposed central types:
 - `Job`: `Engineer`, `Miner`, `Farmer`.
 - `NeedType`: `Hunger`, `Thirst`, `Oxygen`.
 - `ResourceType`: `IronOre`, `CopperOre`, `Steel`, `Components`, `Vegetables`, `Aurite`.
-- `BuildingType`: exactly the 13 MVP types.
+- `BuildingType`: the 13 MVP types plus `Corridor` (P05B).
 - `ConstructionState`: `Blueprint`, `Complete`.
 - `ColonistState`: `Idle`, `MovingToWork`, `Working`, `MovingToService`, `Refilling`, `Dead`.
 - `RunState`: `Playing`, `Won`, `Lost`.
@@ -541,8 +567,8 @@ Expose read-only simulation queries for UI/rendering; UI must not obtain mutable
 
 | Record | Relevant members |
 |---|---|
-| Colonist | ID, name, job, state, position, yaw, three needs, alive flag, target building/service ID, reserved slot, route, waypoint index, navigation revision, retry timer. |
-| Building | ID, type, grid origin, quarter turns, construction state/progress, enabled flag, access cells, reserved/present worker IDs, production accumulator, utility status. |
+| Colonist | ID, name, job, state, position, yaw, three needs, alive flag, target building/service ID, reserved slot, route, waypoint index, navigation revision, retry timer, current dome (building ID or none, P05B). |
+| Building | ID, type, grid origin, quarter turns, construction state/progress, enabled flag, access cells (for domes: entrance candidates and current entrances), reserved/present worker IDs, production accumulator, utility status. |
 | Deposit | Resource type, anchor cell, occupying mine ID; discovery/remaining yield are future extensions. |
 | Inventory | Six item amounts, capacity, atomic affordability/transaction operations. |
 | UtilitySnapshot | Power produced/demanded, water produced/allocated, indoor oxygen capacity, indoor population and per-building operation reasons. |
@@ -610,20 +636,24 @@ Use a **64×64 XZ grid with 1 m cells** as the MVP world coordinate system. The 
 - Quarter-turn transform (one shared pure function): for a footprint `w×h` at 0° and a cell or access offset `(dx, dz)` in that frame, `q=1 → (h−1−dz, dx)`, `q=2 → (w−1−dx, h−1−dz)`, `q=3 → (dz, w−1−dx)`; odd `q` gives an `h×w` footprint. The visual rotates by `q×90°` about the footprint centre, with the `world_transform` yaw convention (a +90° turn maps +X to +Z).
 - Each building definition includes its visual composition (asset, offset, yaw, scale multiplier) and its walkable service/access offsets; the asset's own scale, pivot and forward axis come from `assets.json`. A visual may be smaller than its logical footprint, but unexplained invisible blocking beyond one 1 m safety margin is not allowed.
 - Access/service cells are walkable cells adjacent to footprints and are reserved/validated with the building footprint.
-- Indoor cells form a fixed roofless base region.
-- The boundary is modelled on cell **edges**, not cells: every cell is classified as inside or outside, and a step between an inside and an outside cell is allowed only through an open Exit Door crossing. Wall pieces are visual only (`blocksNavigation: false`) and never remove interior or exterior cells.
-- An Exit Door is a **list of crossings**, each an `(outside cell, inside cell)` 4-neighbour pair on the same side of the base and contiguous. `NavigationGrid` stores crossings per door so a 1-cell or wider door works without code changes. Door width, mesh pivot and visual opening align to those crossings (the scene generator scales the gate to the crossing count). Only a completed, enabled door permits crossing; power and base oxygen only gate the suit refill on inward crossing (C6), never passage.
+- **Inside cells are built, not fixed** (base layout change of 27 Nov 2026). Every cell starts outside. When a Corridor or an Exit Door completes, the cells listed in its `insideOffsets` (C9.1) become inside: the Corridor's own cell, or the two chamber rows of the Exit Door. The MVP has no demolition, so a cell never returns outside.
+- The boundary is modelled on cell **edges**, not cells: every cell is classified as inside or outside, and a step between an inside and an outside cell is allowed only through an open Exit Door crossing. Corridor walls are drawn by the view on these edges and are visual only; they never remove inside or outside cells. Neighbouring inside cells always connect, so two corridors laid side by side form one wider corridor. This is harmless because air, power and water are global.
+- An **Exit Door is an airlock building** with a 2×3 walkable footprint, 2 cells wide like the corridors. At 0°, row `z = 0` is the outside apron, and rows `z = 1..2` are the chamber; every offset rotates with the shared quarter-turn transform. When the door completes, the chamber becomes inside and `NavigationGrid` registers the two apron-to-chamber edges, `(0,0)→(0,1)` and `(1,0)→(1,1)`, as the door's crossings. The far end of the chamber (row 2) opens onto a corridor. Only a completed, enabled door permits crossing; power and base oxygen only gate the suit refill on inward crossing (C6), never passage.
+- A **Corridor** record is one walkable 1×1 cell; corridors are laid as **2-cell-wide strips** (P07), which fit the 1.10 m astronaut (C5.2). A Corridor cell must be 4-adjacent to the base network (a completed or planned Corridor or Exit Door chamber cell), or to an earlier cell of the same placed strip that is.
+- **Domes** are the interior buildings (Storage, Oxygenator, Greenhouse and the three Processors). Their footprints block their cells like any footprint and stand on outside cells. Their access offsets are **entrance candidates**: a candidate on an inside cell is an entrance. A dome needs at least one candidate on the base network when it is placed. Work and services use entrances only, and construction may use any walkable candidate. A colonist present at an entrance is inside the dome and hidden (C6).
+- Exterior buildings keep their footprint and access cells on outside cells that are not Corridor or Exit Door cells.
 - Decorative objects only block navigation when explicitly marked.
 
-This preserves the GDD's Exit Door rule without simulating air volumes or building a physics engine.
+This preserves the GDD's Exit Door rule without simulating air volumes, dome interiors or a physics engine.
 
 On blueprint placement, validate a temporary occupancy change before committing it:
 
 - Footprint and access cells are valid.
 - No existing entity is trapped under the footprint.
 - Required service/job access remains reachable.
-- Indoor/outdoor restrictions and deposit match hold.
+- Network restrictions (Corridor adjacency, dome entrance on the network, exterior buildings off the network) and deposit match hold.
 - Colonists retain a path to the appropriate side of an Exit Door.
+- **Not enclosed:** after the change, the outside cells that hold exterior targets (deposits, access cells of exterior buildings, the outer cell of every Exit Door, Landing Pad spawn cells and colonists outside) still form one connected outside region. A corridor ring around a deposit is therefore rejected.
 - The candidate cells stay inside the map and do not overlap other buildings, static blockers, door-crossing cells or reserved spawn cells. They do not overlap deposits either, except for a mine: its footprint must contain exactly one free deposit of its required resource, and that deposit cell becomes part of the mine's footprint.
 - Every service point and every occupied job slot has a walkable access cell after placement.
 
@@ -635,13 +665,35 @@ Colonists may share a grid cell and visually overlap in the MVP. They must not c
 
 The framework's game coordinate convention is Y-up, with movement on XZ. Convert model bounds once during asset-catalog load and store a normalized visual transform; do not infer gameplay footprints at runtime from rendered triangles. Keep the grid origin and cell-center conversion in `NavigationGrid` and use the same conversion for placement previews, picking, spawn points and scene transforms.
 
-Known pack measurements establish useful anchors: `terrain.obj` spans 1×1 m in XZ; `platform_small.obj` is 1×1 m; `platform_large.obj` is 2×2 m and 0.1 m high; `gate_simple.obj` is about 1 m wide; `astronautA.obj` is about 0.793 m tall before the proposed ~2.269 uniform scale to 1.8 m. Machines and rocks have varying sub-meter to ~1.3 m bounds. Render `platform_large` as a 2×2 cell floor module; do not scale it to a 1-cell tile. Keep each building's grid footprint, access offsets and visual composition together in `buildings.json`, and each model's scale, ground-contact/pivot offset and semantic forward axis in `assets.json`.
+Known pack measurements establish useful anchors: `terrain.obj` spans 1×1 m in XZ; `platform_small.obj` is 1×1 m; `platform_large.obj` is 2×2 m and 0.1 m high; `gate_simple.obj` is about 1 m wide; `astronautA.obj` is about 0.793 m tall before the proposed ~2.269 uniform scale to 1.8 m. Machines and rocks have varying sub-meter to ~1.3 m bounds. The base modules (airlock, corridor floor, wall, arch and junction) are team-authored at true metre scale (C5.2), so their `assets.json` scale is 1. Keep each building's grid footprint, access offsets and visual composition together in `buildings.json`, and each model's scale, ground-contact/pivot offset and semantic forward axis in `assets.json`.
 
 For every selected OBJ, P02 must record tested bounds, MTL/material runs, semantic facing, foot contact and loader result. Define a world-space picking proxy and navigation footprint separately. Do not use `Mesh::testSphereCollision` as the building-placement system; use grid occupancy. Ray picking uses the visual proxy followed by mesh ray testing only where needed.
 
-Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. Define the roofless base region as the rectangle `x=24..39, z=24..39`, with the complete perimeter boundary closed except one fixed west-side Exit Door. **Team decision (24 Nov 2026): the door is 2 cells wide**, with crossings `(23,31)→(24,31)` and `(23,32)→(24,32)`; the gate model is drawn at scale 2 (2 m × 2.16 m). Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Rocket arrivals (P09) appear instead on the free access cells around the Landing Pad that was called. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
+Default scenario coordinates use grid indices `[0,63]` in each dimension and world XZ origin `[-32,-32]`; cell `(x,z)` center is `(-32+x+0.5, -32+z+0.5)`. There is no predefined base region: the crew builds the base from an Exit Door, corridors and domes (rules above). Leave the area around the map centre `(32,32)` free so it has room; this is a scenario layout choice, not a C++ constraint. Start all colonists at the exterior landing cluster centered on `(18,31)` using unique, prevalidated free cells. Rocket arrivals (P09) appear instead on the free access cells around the Landing Pad that was called. Put the iron deposit at `(8,12)` and copper deposit at `(55,12)` so both are visible from the start and neither overlaps the base or spawn cluster. These coordinates are initial scenario data, not constants in C++.
 
-`scene.json` must render the fixed boundary around this region with a visible doorway opening exactly as wide as the door crossings, terrain across the navigable map and markers/models for both deposits. The region has no floor/roof obstruction that prevents movement; floor modules are visual only. Placement is allowed in the interior/exterior zones specified by each building definition. The first Exit Door may be built from the exterior access cell before any indoor access exists.
+`scene.json` renders the terrain across the navigable map and the markers/models for both deposits only. Corridor floors, walls and arches, doors and domes are runtime building visuals (C9.1). Corridors have an open arched roof; domes are closed shells. The first Exit Door is built from its outer side before any inside cell exists.
+
+### C5.2 Base module dimensions and view rules
+
+**Team decision (27 Nov 2026).** The astronaut is 1.10 m wide, 1.80 m tall and 0.75 m deep (`astronautA.obj` at scale 2.269). The base modules are sized around it; their source is `tools/blender/build_base_modules.py`, which regenerates the OBJ/MTL files, the `.blend` and preview renders.
+
+| Module (asset id) | Logical footprint | Visual dimensions |
+|---|---|---|
+| Exit Door (`airlock`) | 2×3 walkable: apron row + 2 chamber rows | 2.0 m wide, 3.0 m deep, rounded roof to 2.97 m (3.19 m with roof equipment); outer door 1.40 × 2.10 m; chamber 1.76 m wide, 2.32 m high; a second, visual-only door frame inside the chamber |
+| Corridor floor (`corridor_floor`) | one per corridor cell | 1 × 1 m, top at 0.10 m (walkable surface, same height as the airlock floor) |
+| Corridor wall (`corridor_wall_frame`) | one per wall edge | 1 m long, 0.12 m thick on the inner side of the edge, 2.42 m high; lower panel, orange band, one post in the middle and a top rail at 2.30–2.42 m |
+| Corridor arch (`corridor_arch`) | one per straight 2-cell row | spans 2.0 m, 0.08 m thick, from the rail to 2.92 m |
+| Corridor junction (`corridor_junction`) | one per 2×2 junction block | four corner posts, a ring beam at rail height and two crossed diagonal arches to 3.02 m |
+
+A 2-cell corridor therefore gives a 1.76 m clear width and 2.20 m clear height under the rail, the same profile as the airlock chamber. The view builds every corridor visual from the inside cells; `tools/base_layout_rules.py` is the reference implementation that the C++ view must match in P05B:
+
+- **Floors:** one `corridor_floor` per Corridor cell.
+- **Walls:** one `corridor_wall_frame` per edge between a Corridor cell and a cell that is not inside. In P05B the C++ view also leaves the edge between a dome entrance and its dome open; the reference script has no domes yet. The asset is authored on the local −X face of its cell and turned with the scene generator's yaws (west 0°, east 180°, south 90°, north −90°).
+- **Arches:** one `corridor_arch` per row where the cross-section through two neighbouring Corridor cells is exactly "not inside | corridor | corridor | not inside". It sits on the two wall posts of that row.
+- **Junctions:** one `corridor_junction` per 2×2 block of Corridor cells that no arch covers (L corner, T or cross), chosen in cell order without overlapping. It stands on its own posts, so it fits whichever sides are open. Wider areas and single cells get neither arch nor cap, so no rib is ever left hanging.
+- **Colonists on the passage axis:** colonists move between cell centres, which in a 2-cell passage are 0.5 m off its axis; drawn there, a 1.10 m astronaut cuts into the walls and the 1.40 m door frame. The view therefore draws a colonist standing on, or walking between, Exit Door cells and arch-covered Corridor cells with a 0.5 m sideways offset towards the passage axis, and on a junction block towards the block centre. The offset is visual only and interpolated between cells; the simulation keeps cell centres.
+
+Domes must be modelled at the same scale. The current `greenhouse_dome.obj` is only 1.26 m tall at its catalog scale, so the dome shells (A5) are made to stand clearly above a colonist, about 2.5–3 m.
 
 ### C6. Work and needs
 
@@ -655,8 +707,8 @@ Needs interrupt work at `<=20`. Retain the refill task until the need reaches 10
 
 Service rules:
 
-- Hunger: visit an access cell of a completed building that offers the `eat` service (MVP: Storage); one vegetable restores Hunger to 100 after the eating time in C8.
-- Thirst: visit an access cell of a completed building that offers the `drink` service (MVP: Storage, which taps the global water flow); refill over time while water is allocated (C7).
+- Hunger: visit an entrance of a completed dome that offers the `eat` service (MVP: Storage); one vegetable restores Hunger to 100 after the eating time in C8.
+- Thirst: visit an entrance of a completed dome that offers the `drink` service (MVP: Storage, which taps the global water flow); refill over time while water is allocated (C7).
 - Oxygen outside: consume suit oxygen.
 - Oxygen inside: maintain Oxygen only when operational Oxygenators cover **all indoor living colonists**.
 - Oxygen in a powered mine: maintain Oxygen for Miners actively working there.
@@ -670,7 +722,9 @@ At zero in any lethal need: mark dead, release reservations immediately and excl
 
 Unavailable services must not produce busy loops. Release stale reservations, keep needs draining, and retry after a short simulation-time interval or relevant world revision.
 
-Idle: a colonist with no eligible task and no urgent need walks to the nearest reachable interior cell that is not a door-crossing cell and waits there, so it does not drain its suit outside. With no reachable interior (no door yet) it waits where it stands. Colonists may share cells (C5).
+Idle: a colonist with no eligible task and no urgent need walks to the nearest reachable entrance of a completed dome and waits there, inside that dome. With no completed dome it waits on the nearest reachable inside cell that is not a door cell; with no reachable inside cell (no door yet) it waits where it stands. Either way it does not drain its suit outside. Colonists may share cells (C5).
+
+**Presence in domes (base layout change of 27 Nov 2026).** A colonist standing at an entrance of a completed dome while `Working` there, `Refilling` there or idle-waiting there is inside that dome. The simulation stores that dome's ID per colonist and exposes `occupants(BuildingId)`. The view hides such colonists and they cannot be picked; the dome popup lists them with their activity, and selecting a name opens their popup. The colonist is visible again as soon as it leaves the entrance. Being in a dome changes nothing else: the colonist is on an inside cell, so it counts as indoor for oxygen coverage like any colonist in a corridor.
 
 #### C6.1 Deterministic colonist state transitions
 
@@ -739,7 +793,7 @@ These values are implementation starting points, not documented game requirement
 | Drain per second | Hunger 0.10, Thirst 0.12, unsupplied Oxygen 0.10 |
 | Thirst refill | 20 need units/s; consumes 0.01 water per restored unit |
 | Hunger refill | One vegetable restores Hunger to 100 after 3 s of eating |
-| Eat/drink points | Access cells of completed buildings offering the `eat`/`drink` service (MVP: Storage) |
+| Eat/drink points | Entrances of completed domes offering the `eat`/`drink` service (MVP: Storage) |
 | Oxygenator capacity | 25 indoor colonists |
 | Mine slots | Five Miners |
 | Processor/Greenhouse slots | One compatible worker |
@@ -748,19 +802,20 @@ These values are implementation starting points, not documented game requirement
 | Rocket cooldown/animation | None initially; one batch per explicit activation |
 | Deposits | Infinite for MVP; type and position still explicit |
 
-Starting cargo can fund construction immediately, but eating and drinking require a constructed Storage (and drinking also a powered Water Extractor). There is no prebuilt base. The initial needs give about 11 minutes before Thirst reaches 20 and about 13 minutes before Hunger and suit Oxygen do, which is the window for the bootstrap chain in E3 (Solar Panel, Water Extractor, Exit Door, Oxygenator, Storage).
+Starting cargo can fund construction immediately, but eating and drinking require a constructed Storage (and drinking also a powered Water Extractor). There is no prebuilt base. The initial needs give about 11 minutes before Thirst reaches 20 and about 13 minutes before Hunger and suit Oxygen do, which is the window for the bootstrap chain in E3 (Solar Panel, Water Extractor, Exit Door, the first corridor cells, Oxygenator, Storage).
 
-Proposed building definitions:
+Proposed building definitions (zones and footprints follow the base layout change of 27 Nov 2026):
 
 | Type | Zone | Footprint | Cost | Build seconds | Power demand | Water/s | Operation |
 |---|---|---|---|---:|---|---:|---|
-| Exit Door | Boundary socket | Portal | 5 Steel | 10 | 1 | 0 | Inside/outside passage; power is needed only for the suit refill |
-| Storage | Interior | 2×2 | 5 Steel | 10 | 0 | 0 | +100 item capacity; `eat` and `drink` service point |
-| Oxygenator | Interior | 2×2 | 5 Steel, 2 Components | 15 | 2 | 0.02 | Capacity 25 |
-| Greenhouse | Interior | 3×3 | 8 Steel, 2 Components | 20 | 2 | 0.05 | One vegetable/10 s |
-| Iron Processor | Interior | 2×2 | 5 Steel, 2 Components | 15 | 3 | 0 | One ore→one Steel/5 s |
-| Copper Processor | Interior | 2×2 | 5 Steel, 2 Components | 15 | 3 | 0 | One ore→one Component/5 s |
-| Aurite Processor | Interior | 2×2 | 10 Steel, 5 Components | 20 | 3 | 0 | One Steel + one Component→one Aurite/5 s |
+| Exit Door | Network (airlock) | 2×3 walkable | 5 Steel | 10 | 1 | 0 | Inside/outside passage through 2 crossings; power is needed only for the suit refill |
+| Corridor | Network | 1×1 walkable | 1 Steel | 3 | 0 | 0 | Its cell becomes inside; laid as 2-cell-wide strips, one record per cell (2 Steel per metre) |
+| Storage | Interior (dome) | 2×2 | 5 Steel | 10 | 0 | 0 | +100 item capacity; `eat` and `drink` service point |
+| Oxygenator | Interior (dome) | 2×2 | 5 Steel, 2 Components | 15 | 2 | 0.02 | Capacity 25 |
+| Greenhouse | Interior (dome) | 3×3 | 8 Steel, 2 Components | 20 | 2 | 0.05 | One vegetable/10 s |
+| Iron Processor | Interior (dome) | 2×2 | 5 Steel, 2 Components | 15 | 3 | 0 | One ore→one Steel/5 s |
+| Copper Processor | Interior (dome) | 2×2 | 5 Steel, 2 Components | 15 | 3 | 0 | One ore→one Component/5 s |
+| Aurite Processor | Interior (dome) | 2×2 | 10 Steel, 5 Components | 20 | 3 | 0 | One Steel + one Component→one Aurite/5 s |
 | Iron Mine | Exterior/iron | 2×2 | 5 Steel | 15 | 4 | 0 | One ore per present Miner/5 s |
 | Copper Mine | Exterior/copper | 2×2 | 5 Steel | 15 | 4 | 0 | Same, copper |
 | Water Extractor | Exterior | 2×2 | 5 Steel, 2 Components | 15 | 2 | 0 | Produces two water/s |
@@ -768,7 +823,7 @@ Proposed building definitions:
 | Landing Pad | Exterior | 4×4 | 10 Steel, 5 Components | 20 | 1 | 0 | Arrival service |
 | Haven Beacon | Exterior | 4×4 | **300 Aurite** | 60 | 0 | 0 | Victory building; no operating function, so no power draw |
 
-Operational staffing is fixed as follows: Iron Mine and Copper Mine accept up to five Miners each, producing one ore per present Miner per cycle; Iron, Copper and Aurite Processors each require one Miner; Greenhouse requires one Farmer; Exit Door, Storage, Oxygenator, Water Extractor, Solar Panel, Landing Pad and Haven Beacon require no operational worker. Construction of every building requires one Engineer in its construction slot. These assignments are data in `buildings.json`; there are no implicit compatibility rules in C++.
+Operational staffing is fixed as follows: Iron Mine and Copper Mine accept up to five Miners each, producing one ore per present Miner per cycle; Iron, Copper and Aurite Processors each require one Miner; Greenhouse requires one Farmer; Exit Door, Corridor, Storage, Oxygenator, Water Extractor, Solar Panel, Landing Pad and Haven Beacon require no operational worker. Construction of every building requires one Engineer in its construction slot. These assignments are data in `buildings.json`; there are no implicit compatibility rules in C++.
 
 Storage needs no worker and produces nothing; it only adds capacity and serves food and water. All rates, costs, dimensions, utility demands, access cells, services and visual mappings are loaded from `buildings.json`, which exists from P05 on; no C++ definition table is ever written. The values in C8 are the default dataset for that file and remain provisional only until the economy scenarios in E3 pass.
 
@@ -781,7 +836,7 @@ TJE_Framework/
 ├── CMakeLists.txt                         [M: game + headless arkfall_tests/CTest — done]
 ├── README.md                              [M: build, tests, debug keys — done]
 ├── src/
-│   ├── main.cpp                           [M: unified shutdown — done P01; --scenario done P05]
+│   ├── main.cpp                           [M: unified shutdown — done P01; --scenario done P05; --scene done 27 Nov]
 │   ├── game/
 │   │   ├── game.h / game.cpp               [M: application coordination]
 │   │   ├── arkfall_types.h                 [N: IDs, Cell, Zone, DoorPortal, Job, states, commands — done]
@@ -793,9 +848,9 @@ TJE_Framework/
 │   │   ├── scene_parser.h / .cpp           [M: scene.json → static instances — done]
 │   │   ├── scenario_loader.h / .cpp        [N: scenario.json + scene blocker check — done P03]
 │   │   ├── colonist_catalog.h / .cpp       [N: colonists.json roles — done P03; names done P05]
-│   │   ├── building_catalog.h / .cpp       [N: buildings.json, 13 types, quarter-turn transform — done P05]
+│   │   ├── building_catalog.h / .cpp       [N: buildings.json, 13 types, quarter-turn transform — done P05; Corridor and airlock P05B]
 │   │   ├── inventory.h                     [N: shared item capacity, atomic transactions — done P05]
-│   │   ├── navigation_grid.h / .cpp        [N: zones, doors, BFS — done P03]
+│   │   ├── navigation_grid.h / .cpp        [N: zones, doors, BFS — done P03; per-cell zones P05B]
 │   │   ├── colony_simulation.h / .cpp      [N: gameplay records and ticks — P03 onward]
 │   │   ├── fixed_step_clock.h              [N: 1/30 s accumulator — done]
 │   │   ├── world_transform.h / .cpp        [N: matrix and yaw conventions — done]
@@ -816,13 +871,13 @@ TJE_Framework/
 │   └── nlohmann_json/                       [N: pinned header + license — done]
 ├── data/
 │   ├── arkfall/
-│   │   ├── scene.json                      [N: static visuals, generated from scenario.json]
-│   │   ├── scenario.json                   [N: grid, base, door, deposits, start state]
+│   │   ├── scene.json                      [N: terrain and deposits, generated from scenario.json]
+│   │   ├── scenario.json                   [N: grid, deposits, start state; base block removed P05B]
 │   │   ├── assets.json                     [N: asset paths/transforms/shaders]
-│   │   ├── buildings.json                  [N: 13 building definitions — done P05]
+│   │   ├── buildings.json                  [N: 13 building definitions — done P05; Corridor P05B]
 │   │   ├── colonists.json                  [N: role visuals/speed — P03; names done P05]
 │   │   ├── materials.json                  [N: semantic palette/tints]
-│   │   ├── dev/*.json                      [N: dev/test scenarios — production.json done P05]
+│   │   ├── dev/*.json                      [N: dev/test scenarios — production.json done P05; base_layout, p03_navigation done P05B]
 │   │   ├── models/*.obj / *.mtl             [N: selected runtime copies]
 │   │   └── License.txt                     [N: copied asset license]
 │   ├── shaders/
@@ -831,7 +886,9 @@ TJE_Framework/
 │   │   └── flat.fs                         [E: debug overlay]
 │   └── audio/*.wav                         [N: delivery gate — P11]
 ├── tools/
-│   └── generate_arkfall_scene.py           [N: scene.json from scenario.json — done]
+│   ├── generate_arkfall_scene.py           [N: scene.json from scenario.json — done]
+│   ├── base_layout_rules.py                [N: corridor wall/arch/junction view rules — done 27 Nov]
+│   └── blender/                            [N: build_base_modules.py + arkfall_base_modules.blend — done 27 Nov]
 └── tests/                                  [N: headless arkfall_tests]
     ├── test_harness.h / test_main.cpp      [N: done]
     ├── json_data, world_transform, timing_and_surface,
@@ -839,6 +896,7 @@ TJE_Framework/
     ├── navigation, scenario, simulation tests [N: done P03]
     ├── camera_and_picking, ui tests        [N: done P04]
     ├── building, production tests          [N: done P05]
+    ├── base_layout tests                   [N: done P05B]
     └── survival, construction, economy
         and outcome tests                   [N: P06–P11]
 ```
@@ -851,11 +909,11 @@ The exact replacement API is `SceneLoadResult SceneParser::parse(const std::file
 
 `SceneParser` is required in P02. Modify the existing `TJE_Framework/src/game/scene_parser.*` implementation so it parses `data/arkfall/scene.json` through the pinned JSON library and produces static scene records for `ColonyWorld`. It must not create simulation state or own the asset cache. `AssetCatalog` resolves asset IDs to loaded meshes/materials; `ColonyWorld` creates and owns render views. Remove the unfinished `@tag` branch and implicit `"data/" + name` path construction. Use the exact replacement API specified below; there must be exactly one scene-loading contract.
 
-`scenario.json` is loaded by `ScenarioLoader`. Implemented in P03: `grid` (width, height, cellSize, originXZ), `base.interior` (rectangle) and `base.exitDoors[]` (door sockets: id, `openAtStart`, `crossings[]` of `{outside, inside}` cells), `deposits[]` (id, resource, cell), `staticBlockers[]` (id, inclusive cell rectangle), `initialColonists[]` (id, job, cell, needs) and the optional temporary `debugRoute`. Added later, each together with its loader: `initialInventory`, `cargoCapacity` and `initialBuildings[]` (type, origin, quarter turns; empty in the shipped scenario) in P05; `arkPassengers` and `arrivalDefaultJob` in P09. The schema version stays 1 during development because every scenario file is updated in the same commit as its loader. The shipped scenario starts with no constructed buildings. Runtime buildings and colonists are spawned from simulation state, not duplicated as static entries in `scene.json`. Dev and test scenarios live in `data/arkfall/dev/` and are selected with `--scenario <path>`.
+`scenario.json` is loaded by `ScenarioLoader`. Implemented in P03: `grid` (width, height, cellSize, originXZ), `deposits[]` (id, resource, cell), `staticBlockers[]` (id, inclusive cell rectangle), `initialColonists[]` (id, job, cell, needs) and the optional temporary `debugRoute`. P03 also added `base.interior` (rectangle) and `base.exitDoors[]` (door sockets); P05B removes that `base` block, because inside cells are built (C5). Added later, each together with its loader: `initialInventory`, `cargoCapacity` and `initialBuildings[]` (type, origin, quarter turns; empty in the shipped scenario) in P05; corridor strips in `initialBuildings` (`{"type": "corridor", "from": [x, z], "to": [x, z]}`: the inclusive rectangle between the two cells, which must be exactly 2 cells wide and straight) in P05B; `arkPassengers` and `arrivalDefaultJob` in P09. The schema version stays 1 during development because every scenario file is updated in the same commit as its loader. The shipped scenario starts with no constructed buildings. Runtime buildings and colonists are spawned from simulation state, not duplicated as static entries in `scene.json`. Dev and test scenarios live in `data/arkfall/dev/` and are selected with `--scenario <path>`.
 
 `arrivalDefaultJob` (MVP default `engineer`) sets the job of rocket arrivals. The shipped start uses the fixed cast in F3 (12 colonists: four Engineers, six Miners, two Farmers). That cast is checked by `shipped_data_tests`, not by the loader, so dev and test scenarios may use other casts.
 
-`scene.json` contains every static visual instance present in the shipped map: terrain/floor modules, boundary visuals, pre-built door gates, deposits and decorative props. It is generated from `scenario.json` and `assets.json` by `tools/generate_arkfall_scene.py` and is not edited by hand. It does not contain unused library assets or dynamic colonists/buildings. `assets.json` is the registry of every asset allowed in the build; unused assets are not loaded. The scene stores stable `assetId`, transform, optional material override and `blocksNavigation` flag. `assets.json` holds the shader paths (standard, instanced, lit fragment, debug fragment) and, per asset ID: OBJ and MTL paths under `data/arkfall/models/`, material ID, uniform default scale, pivot offset, semantic forward axis, picking bounds, `walkableSurface` and whether load failure is fatal. `buildings.json` contains exactly the 13 MVP types: id, label, zone, placement (`footprint` or `doorSocket`), footprint `[w, h]` at 0°, required deposit, cost, construction role/slots/seconds, operating role/slots, access offsets at 0°, services (`eat`, `drink`), power demand/output, water demand/output, oxygen capacity, storage capacity, recipe and visual composition (asset, offset, yaw, scale multiplier). Absent features are explicit `null`/`0`, never missing keys. `colonists.json` defines one role per job (visual asset, role tint material, `moveSpeed`) and, from P05, the unique name pool; role/building compatibility lives only in `buildings.json`. `materials.json` defines semantic color/tint IDs; OBJ/MTL remains the source of mesh material properties unless an explicit override is defined. `scenario.json` overrides starting records only; it must not duplicate building or role definitions.
+`scene.json` contains every static visual instance present in the shipped map: terrain, deposits and decorative props. Since P05B it has no boundary walls, interior floor or door gates; those are runtime building visuals. It is generated from `scenario.json` and `assets.json` by `tools/generate_arkfall_scene.py` and is not edited by hand. It does not contain unused library assets or dynamic colonists/buildings. `assets.json` is the registry of every asset allowed in the build; unused assets are not loaded. The scene stores stable `assetId`, transform, optional material override and `blocksNavigation` flag. `assets.json` holds the shader paths (standard, instanced, lit fragment, debug fragment) and, per asset ID: OBJ and MTL paths under `data/arkfall/models/`, material ID, uniform default scale, pivot offset, semantic forward axis, picking bounds, `walkableSurface` and whether load failure is fatal. `buildings.json` contains exactly the 13 MVP types plus Corridor (P05B): id, label, zone (`interior` for domes, `exterior`, `network` for Exit Door and Corridor), placement (`footprint`, `airlock` or `corridor`; `doorSocket` is removed in P05B), footprint `[w, h]` at 0° (walkable for `airlock` and `corridor`, blocked otherwise), `insideOffsets` (footprint cells that become inside on completion; `[]` for every type but Corridor and Exit Door), door `crossings` `[{outside, inside}]` (Exit Door only, otherwise `[]`), required deposit, cost, construction role/slots/seconds, operating role/slots, access offsets at 0° (entrance candidates for domes), services (`eat`, `drink`), power demand/output, water demand/output, oxygen capacity, storage capacity, recipe and visual composition (asset, offset, yaw, scale multiplier). Absent features are explicit `null`/`0`, never missing keys. `colonists.json` defines one role per job (visual asset, role tint material, `moveSpeed`) and, from P05, the unique name pool; role/building compatibility lives only in `buildings.json`. `materials.json` defines semantic color/tint IDs; OBJ/MTL remains the source of mesh material properties unless an explicit override is defined. `scenario.json` overrides starting records only; it must not duplicate building or role definitions.
 
 JSON validation happens before creating the GL scene or starting simulation. Errors identify file, JSON path (for example `buildings[3].footprint[1]`) and expected/actual value. Reject duplicate IDs, missing references, unknown enum strings, non-finite numbers, negative costs/rates, invalid footprints, out-of-grid coordinates, missing model/MTL files, paths escaping `data/`, invalid portal pairs, impossible spawn counts and scenario references to undefined types/assets. Fatal load errors show one useful startup message and exit through unified cleanup; never run a partially loaded game. Gameplay-critical fields have no implicit defaults: missing fields are errors.
 
@@ -871,18 +929,41 @@ Example `buildings.json` fragment (illustrative values; all production values co
   "buildings": [
     {
       "id": "storage", "label": "Storage", "zone": "interior", "placement": "footprint",
-      "footprint": [2, 2], "requiredDeposit": null, "cost": {"steel": 5},
+      "footprint": [2, 2], "insideOffsets": [], "crossings": [], "requiredDeposit": null, "cost": {"steel": 5},
       "construction": {"role": "engineer", "slots": 1, "seconds": 10},
       "operation": null,
       "accessOffsets": [[-1, 0], [2, 0], [0, -1], [1, -1]],
       "services": ["eat", "drink"],
       "power": {"demand": 0, "output": 0}, "water": {"demand": 0, "output": 0},
       "oxygenCapacity": 0, "storageCapacity": 100, "recipe": null,
-      "visuals": [{"assetId": "storage_barrels", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1}]
+      "visuals": [{"assetId": "dome_shell_2x2", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1},
+                  {"assetId": "storage_barrels", "offset": [0, 1.2, 0], "yawDegrees": 0, "scale": 0.4}]
+    },
+    {
+      "id": "corridor", "label": "Corridor", "zone": "network", "placement": "corridor",
+      "footprint": [1, 1], "insideOffsets": [[0, 0]], "crossings": [], "requiredDeposit": null, "cost": {"steel": 1},
+      "construction": {"role": "engineer", "slots": 1, "seconds": 3},
+      "operation": null,
+      "accessOffsets": [[-1, 0], [1, 0], [0, -1], [0, 1]], "services": [],
+      "power": {"demand": 0, "output": 0}, "water": {"demand": 0, "output": 0},
+      "oxygenCapacity": 0, "storageCapacity": 0, "recipe": null,
+      "visuals": [{"assetId": "corridor_floor", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1}]
+    },
+    {
+      "id": "exit_door", "label": "Exit Door", "zone": "network", "placement": "airlock",
+      "footprint": [2, 3], "insideOffsets": [[0, 1], [1, 1], [0, 2], [1, 2]],
+      "crossings": [{"outside": [0, 0], "inside": [0, 1]}, {"outside": [1, 0], "inside": [1, 1]}],
+      "requiredDeposit": null, "cost": {"steel": 5},
+      "construction": {"role": "engineer", "slots": 1, "seconds": 10},
+      "operation": null,
+      "accessOffsets": [[0, -1], [1, -1], [-1, 0], [2, 0]], "services": [],
+      "power": {"demand": 1, "output": 0}, "water": {"demand": 0, "output": 0},
+      "oxygenCapacity": 0, "storageCapacity": 0, "recipe": null,
+      "visuals": [{"assetId": "airlock", "offset": [0, 0, 0], "yawDegrees": 0, "scale": 1}]
     },
     {
       "id": "iron_mine", "label": "Iron Mine", "zone": "exterior", "placement": "footprint",
-      "footprint": [2, 2], "requiredDeposit": "iron", "cost": {"steel": 5},
+      "footprint": [2, 2], "insideOffsets": [], "crossings": [], "requiredDeposit": "iron", "cost": {"steel": 5},
       "construction": {"role": "engineer", "slots": 1, "seconds": 15},
       "operation": {"role": "miner", "slots": 5},
       "accessOffsets": [[-1, 0], [2, 1]], "services": [],
@@ -895,18 +976,12 @@ Example `buildings.json` fragment (illustrative values; all production values co
 }
 ```
 
-Example `scenario.json` for the shipped start after P09, with one of the 12 initial colonists shown (initial actors/resources are explicit, never hidden in C++; the P03 file contains the first six keys plus `debugRoute`):
+Example `scenario.json` for the shipped start after P09, with one of the 12 initial colonists shown (initial actors/resources are explicit, never hidden in C++; there is no `base` block since P05B, and `debugRoute` lives only in `dev/p03_navigation.json`):
 
 ```json
 {
   "schemaVersion": 1,
   "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32, -32]},
-  "base": {
-    "interior": {"min": [24, 24], "max": [39, 39]},
-    "exitDoors": [{"id": "west_door", "openAtStart": false,
-      "crossings": [{"outside": [23, 31], "inside": [24, 31]},
-                    {"outside": [23, 32], "inside": [24, 32]}]}]
-  },
   "deposits": [{"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
                {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}],
   "staticBlockers": [],
@@ -1112,7 +1187,7 @@ Use the current `Camera::getRayDirection` implementation and verify whether the 
 
 **Covers:** MVP-06, MVP-09 and part of MVP-10.  
 **Dependencies:** P04.  
-**Status:** done (25 Nov 2026), see [P05_production_report.md](steps_reports/P05_production_report.md).
+**Status:** done (25 Nov 2026), see [P05_production_report.md](steps_reports/P05_production_report.md). Its door socket, `base.interior` and interior-zone placement rule are replaced in P05B (base layout change of 27 Nov 2026).
 
 **Files:** new `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/data/arkfall/buildings.json`, `TJE_Framework/data/arkfall/dev/production.json`, `TJE_Framework/tests/building_tests.cpp`, `TJE_Framework/tests/production_tests.cpp`; modified `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/game.cpp`, `TJE_Framework/src/main.cpp` (`--scenario`), `TJE_Framework/data/arkfall/{assets,colonists,scenario}.json`, the needed building model copies and `TJE_Framework/tools/generate_arkfall_scene.py`.
 
@@ -1137,10 +1212,38 @@ Use a **temporary developer scenario** (`data/arkfall/dev/production.json`) with
 
 **Test:** two Miners competing for the last slot; repeated job changes; processing while inventory is exactly full; `buildings.json` rejection cases (missing type, duplicate id, unknown role or deposit, invalid footprint or access offset, unknown visual asset).
 
+### P05B — Build the base from domes and corridors
+
+**Covers:** the base layout change of 27 Nov 2026; foundations of MVP-03, MVP-04 and MVP-05.  
+**Dependencies:** P05. **Must come before P06**, whose oxygen, suit-refill and idle rules depend on which cells are inside.  
+**Already done (27 Nov 2026):** the `airlock`, `corridor_floor`, `corridor_wall_frame`, `corridor_arch` and `corridor_junction` models and their `assets.json` entries, the reference view rules in `tools/base_layout_rules.py`, and the `--scene` option with a static preview (C5.2). P05B turns them into simulation-driven buildings and views.  
+**Status:** done (27 Nov 2026), see [P05B_base_layout_report.md](steps_reports/P05B_base_layout_report.md). The static preview was removed (replaced by `dev/base_layout.json`); dome shells move to P07.
+
+**Files:** `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_ui_render.cpp`, `TJE_Framework/tools/generate_arkfall_scene.py`, `TJE_Framework/data/arkfall/{assets,buildings,materials,scenario,scene}.json`, `TJE_Framework/data/arkfall/dev/production.json`, new `TJE_Framework/data/arkfall/dev/{base_layout,p03_navigation}.json`, the dome-shell models, new `TJE_Framework/tests/base_layout_tests.cpp`, and the navigation, scenario, building and production tests that assume the fixed rectangle.
+
+**Changes:**
+
+1. **No fixed interior.** Remove `base.interior` and `base.exitDoors` from `scenario.json`, `ScenarioLoader` and the scene generator. Every cell starts outside. `scene.json` keeps the terrain and the deposits only; regenerate it. `NavigationGrid` gains `setZone(Cell, Zone)`, which bumps the revision.
+2. **Corridor type.** Add `BuildingType::Corridor` and its `buildings.json` definition (C8): placement `corridor`, footprint 1×1, walkable, `insideOffsets` `[[0, 0]]`. `initialBuildings` accepts corridor strips `{"type": "corridor", "from": [x, z], "to": [x, z]}`: the inclusive rectangle between the two cells must be straight and exactly 2 cells wide, and it expands to one record per cell, row by row from `from`.
+3. **Exit Door as an airlock.** Placement `airlock`, walkable 2×3 footprint, `insideOffsets` for the two chamber rows and two `crossings` in `buildings.json` (C5, C9.1). In `initialBuildings` it takes `origin` + `quarterTurns` like any building; `socket` is removed. When it completes, its chamber becomes inside and both crossings are registered as one door with `NavigationGrid::addDoor(…, true)`.
+4. **Completion effects.** A completed Corridor or Exit Door turns its `insideOffsets` cells inside. Inside cells never return outside, because the MVP has no demolition. Every zone change bumps the grid revision, so routes replan.
+5. **Placement rules (C5).** Update `validatePlacement` with the new codes: `needs_network` (a corridor not adjacent to the base network or its own strip, or a dome without an entrance candidate on it) and `on_network` (a footprint, or an exterior building's access cell, on a corridor or door cell). Remove `wrong_zone` for domes and the socket codes (`socket_taken`, `door_cells`, `unknown_socket`) for doors. The `enclosed` check is added in P07 with the other connectivity checks.
+6. **Dome entrances.** For a dome, the access offsets are entrance candidates, and the entrances are the candidates that are inside cells. Recompute them whenever the zone map changes. Work slots, and from P06 the services, use entrances only. Construction may use any walkable candidate.
+7. **Hidden presence.** Add a per-colonist current dome (building ID or none). It is set while the colonist is present at an entrance of a completed dome in `Working` (P06 adds `Refilling` and idle waiting) and cleared when the colonist leaves. Add the read-only query `occupants(BuildingId)`.
+8. **Views.** `ColonyWorld` skips hidden colonists when drawing and picking. Corridor floors, walls, arches and junction caps follow the C5.2 rules (port `tools/base_layout_rules.py` to a headless C++ helper and test it against the same layouts), and colonists on Exit Door and corridor cells are drawn on the passage axis (C5.2). Rebuild the corridor views when the grid revision changes. The Exit Door uses the `airlock` visual; domes use their closed shell visuals from `buildings.json`.
+9. **Popups.** A dome's building popup lists its occupants (name and activity); clicking a name opens that colonist's popup. A hidden colonist's popup says "Inside <building> #id". Corridor cells get a minimal popup (type and construction state).
+10. **Scenarios.** Rewrite `dev/production.json` with an Exit Door, a corridor and the domes along it. Add `dev/base_layout.json` (an Exit Door, an L-shaped corridor, a Storage and an Iron Processor, an Iron Mine and Miners outside) for the acceptance below. The P03 `debugRoute` crosses the old fixed door, so it moves now (earlier than planned in P07) to `dev/p03_navigation.json`, which starts with a completed Exit Door and corridor that the route crosses. The shipped scenario loses `debugRoute` and keeps no buildings.
+
+**Acceptance:** in `dev/base_layout.json`, a Miner walks from the outside through the airlock and along the corridor in view. The Miner disappears at the processor dome when it starts working, is listed in that dome's popup, and is visible again when it leaves. Colonists outside walk around the corridors and never step between a corridor and the outside except through the door. The P05 production results still hold in the rewritten `dev/production.json`.
+
+**Tests:** zones change only on completion; both crossings are registered only when the door completes; corridor adjacency (accepted, rejected, chained through its own strip); a dome with and without an entrance candidate on the network; entrances recomputed after a new corridor; an exterior access cell on a corridor is rejected; wall, arch and junction placement for straight, L, T and cross layouts (same results as `tools/base_layout_rules.py`); the passage-axis offset for straight, junction and airlock cells; the hidden flag and occupants are set and cleared; corridor strips in `initialBuildings` (diagonal, 1-wide, 3-wide or out-of-bounds strips rejected); deterministic replay.
+
+**Risks:** a dome whose only entrance candidate is a corridor blueprint that never completes (its workers then have no entrance: report "no entrance" in the popup); a colonist standing on a cell that becomes inside (allowed: that colonist is simply indoors); idle colonists piling up at one entrance (allowed: colonists may share cells, C5).
+
 ### P06 — Add survival and utility dependencies
 
 **Covers:** MVP-07, MVP-08, MVP-11 and MVP-14 foundation.  
-**Dependencies:** P05.
+**Dependencies:** P05B.
 
 **Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,colonists,scenario}.json`, `TJE_Framework/data/arkfall/dev/survival.json`, `TJE_Framework/tests/survival_tests.cpp`.
 
@@ -1150,7 +1253,7 @@ Use a **temporary developer scenario** (`data/arkfall/dev/production.json`) with
 2. Add power snapshot evaluation.
 3. Add water flow and allocation.
 4. Add indoor oxygen coverage, mine oxygen, suit consumption and the suit refill on inward crossing of a powered door with base oxygen coverage (an unpowered door stays passable).
-5. Implement service navigation and refill states using the `eat`/`drink` services declared in `buildings.json` (MVP: Storage), plus the idle rule of C6.
+5. Implement service navigation and refill states using the `eat`/`drink` services declared in `buildings.json` (MVP: Storage, used at its entrances), plus the idle rule of C6. Extend the P05B hidden presence to `Refilling` and to idle colonists waiting at a dome entrance.
 6. Implement Farmer occupancy and vegetable production.
 7. Add interruption/release/retry handling.
 8. Mark deaths, release tasks and update living population.
@@ -1169,7 +1272,7 @@ evaluate outcome
 
 A building completed during a tick becomes operational on the next tick. Use this rule consistently.
 
-**Acceptance:** no Farmer means no vegetables; no power means no mine production; insufficient indoor oxygen drains everyone indoors; powered working Miners retain mine oxygen; disabled services do not refill needs.
+**Acceptance:** no Farmer means no vegetables; no power means no mine production; insufficient indoor oxygen drains everyone indoors, in domes and corridors alike; powered working Miners retain mine oxygen; disabled services do not refill needs; a colonist eating or drinking at a Storage is hidden and listed in its popup.
 
 **Risks:** urgent-task oscillation, use of unavailable services, mine oxygen accidentally supplying the base, dead workers retaining slots.
 
@@ -1178,30 +1281,30 @@ A building completed during a tick becomes operational on the next tick. Use thi
 **Covers:** MVP-04 and completes its integration with MVP-05/08.  
 **Dependencies:** P06.
 
-**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{assets,buildings,colonists,materials,scenario,scene}.json`, `TJE_Framework/data/arkfall/models/*` (all building visuals), `TJE_Framework/data/arkfall/dev/p03_navigation.json`, `TJE_Framework/tools/generate_arkfall_scene.py`, `TJE_Framework/tests/construction_tests.cpp`, `TJE_Framework/tests/shipped_data_tests.cpp`.
+**Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/navigation_grid.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/colony_world.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{assets,buildings,colonists,materials,scenario,scene}.json`, `TJE_Framework/data/arkfall/models/*` (all building visuals), `TJE_Framework/tools/generate_arkfall_scene.py`, `TJE_Framework/tests/construction_tests.cpp`, `TJE_Framework/tests/shipped_data_tests.cpp`.
 
 **Changes:**
 
-1. Use the 13 `buildings.json` definitions from P05 for placement; any missing field is added to that file and its loader, never to C++.
-2. Add Interior/Exterior build tabs.
+1. Use the 14 `buildings.json` definitions (the 13 MVP types plus Corridor, P05B) for placement; any missing field is added to that file and its loader, never to C++.
+2. Add Base (Exit Door, Corridor and the domes) and Exterior build tabs.
 3. Preview footprint, orientation and validity.
 4. Rotate footprints in 90° increments with R.
-5. Validate location, resource cost, deposit type and connectivity.
+5. Validate location, resource cost, deposit type and connectivity, using the P05B placement rules plus the `enclosed` check of C5: corridors and footprints must never cut the outside into separate regions that hold exterior targets.
 6. Commit cost, occupancy and blueprint atomically.
 7. Assign one nearest Engineer to its construction access.
 8. Accumulate progress only while that Engineer is present.
 9. Preserve progress when interrupted.
 10. Switch to the JSON-defined no-base, 12-colonist starting scenario and validate its full bootstrap build order before release. `shipped_data_tests` checks the 12-colonist cast (4/6/2), cargo and passenger values; the loader does not.
-11. The door socket starts closed (`openAtStart: false`); building the Exit Door on it opens it. The scene generator emits a gate only for sockets that start open; otherwise the gate is the Exit Door building's visual.
-12. Move the P03 navigation scenario (single colonist plus `debugRoute`) to `data/arkfall/dev/p03_navigation.json`; the shipped scenario has no `debugRoute`.
+11. Corridor placement: press and drag from the network to lay a straight 2-cell-wide strip (axis locked to the larger drag direction; R picks which side of the cursor the second lane goes). The preview shows every cell's validity, the arches and junction caps it will create (C5.2) and the total cost. Each valid cell becomes its own blueprint, row by row from the start of the drag, so the strip grows outwards from the network. The whole strip is rejected when it cannot be paid in full.
+12. The Exit Door is placed like any other building (no socket). The first Exit Door is built from its outer side and creates the first inside cell. Corridors and domes are then built from the inside cells next to them.
 13. Mines: the footprint must contain exactly one free deposit of the required resource (C5). Switch the copper deposit visual to `rock_crystals.obj` so the two deposit types are easy to tell apart.
-14. Copy and register the remaining building visuals (A5); the Solar Panel uses a small team-authored OBJ/MTL instead of generated geometry.
+14. Copy and register the remaining building visuals (A5), including the dome shells (moved here from P05B); the Solar Panel uses a small team-authored OBJ/MTL instead of generated geometry.
 
 Construction payment occurs once at placement. Canceling the unplaced ghost is free. For MVP, placed blueprints cannot be demolished/canceled; say this in the UI rather than implying a refund mechanic.
 
-**Acceptance:** all 13 types can be constructed; mines require matching deposits; no placement blocks the only doorway or traps a worker. Initial cargo can establish the first life-support and production chain without cheats.
+**Acceptance:** all 13 types and corridors can be constructed; mines require matching deposits; no placement encloses an exterior target, blocks the only door or traps a worker. Initial cargo can establish the first life-support and production chain without cheats.
 
-**Risk:** a blueprint blocks its own builder. Access cells must be outside occupied footprints; Exit Door uses a portal-specific rule. The first Door must be constructible from its exterior side before indoor access exists.
+**Risk:** a blueprint blocks its own builder. Access cells must be outside occupied footprints. A corridor ring can enclose a deposit or a mine, which the `enclosed` check must reject before payment. The first Exit Door must be constructible from its outer side before any inside cell exists.
 
 ### P08 — Complete copper, Aurite and storage progression
 
@@ -1236,7 +1339,7 @@ Construction payment occurs once at placement. Canceling the unplaced ghost is f
 **Changes:**
 
 1. Add a “Call rocket” button to the popup of a completed, powered Landing Pad and the GDD shortcut (select the pad, press L); selection alone must not trigger repeated arrivals.
-2. Spawn the batch on the free access cells around the called Landing Pad, then on the nearest free exterior cells found by BFS from the pad; check that every arrival has a route to the base before committing.
+2. Spawn the batch on the free access cells around the called Landing Pad, then on the nearest free exterior cells found by BFS from the pad; check that every arrival has a route to the outer cell of a completed Exit Door before committing.
 3. Commit passenger decrement and spawn batch together.
 4. Spawn each colonist with full needs and the `arrivalDefaultJob` specified in `scenario.json` (MVP default: Engineer); choose names deterministically from the colonist catalog.
 5. Require role reassignment through the existing popup.
@@ -1301,12 +1404,12 @@ Do not copy example shader/picking signatures from the slides without checking c
 |---|---|---|
 | **H0 — Stable foundation** | P01–P02 | Correctly colored scene and dependable startup/shutdown. |
 | **H1 — Navigation proof** | P03–P04 | One colonist crosses the Exit Door; camera and selection work. |
-| **H2 — Playable colony slice** | P05–P06 | Autonomous work, food/water/oxygen, production and death. |
+| **H2 — Playable colony slice** | P05, P05B, P06 | Autonomous work in a base of domes and corridors, food/water/oxygen, production and death. |
 | **H3 — Construction economy** | P07–P08 | Start from cargo and build the resource chain through Aurite. |
 | **H4 — Complete gameplay MVP** | P09–P10 | Grow population, win, lose and restart through UI. |
 | **H5 — Academic delivery** | P11 | Sound, completeness, Release validation and distributable package. |
 
-**Status (25 Nov 2026):** H0 and H1 complete (P01–P04); H2 in progress (P05 done, P06 next).
+**Status (27 Nov 2026):** H0 and H1 complete (P01–P04); H2 in progress (P05 and P05B done, P06 next).
 
 **Critical path:** navigation → reservations/task interruption → survival/services → construction → complete economy → population/outcomes.
 
@@ -1320,14 +1423,15 @@ Use a separate test executable with explicit failure reporting; do not rely only
 |---|---|
 | Data loading | Valid files; missing file/key; duplicate IDs; unknown references/enums; invalid/non-finite numbers; unsupported schema; path traversal; wrong array lengths; invalid rotated footprint; scene blocker/grid mismatch; no partial startup after failure. |
 | Scene/assets | `SceneParser` groups instances by asset; correct world transform/pivot; bad MTL/model diagnostics; repeated instance parity; no accidental load of unused assets; all selected models within renderer limits. |
-| Navigation | Unreachable route, repeated searches, doorway-only crossing, occupancy revision, shortest route. |
+| Navigation | Unreachable route, repeated searches, doorway-only crossing, occupancy revision, shortest route; cells turn inside only when their Corridor or Exit Door completes; the door crossing exists only after completion. |
 | Movement/collision | Cell-center conversion round trip; continuous motion budget at multiple speeds/dt; no overshoot; no diagonal corner cut; no wall/closed portal crossing; newly blocked route replan/stuck recovery; actors may share cells; objects block only when flagged. |
 | Reservations | Last-slot competition, release on need/death/job change, no overstaffing. |
 | Transactions | No negative inventory, no partial recipes, capacity boundaries, cost paid once. |
 | Needs | Threshold interruption, refill hysteresis, zero death, service failure during travel. |
 | Utilities | Exact power boundary; zero generation; all-or-nothing brownout; water shortage/tie order/consumer priority; oxygen capacity 25/26; local mine oxygen isolation; snapshot stable throughout a tick. |
 | State machine | Every allowed transition and rejected transition; simultaneous need thresholds; invalid service/building; role change; death during travel; no stale target/reservation; deterministic replay of same commands. |
-| Construction | Mine without its deposit or on the wrong deposit, non-mine overlapping a deposit or spawn cell, rotated footprint and access cells (all four quarter turns), trapped access, door socket, disconnected service, insufficient cost, interrupted Engineer, invalid ghost cancellation, atomic cost/occupancy. |
+| Construction | Mine without its deposit or on the wrong deposit, non-mine overlapping a deposit or spawn cell, rotated footprint and access cells (all four quarter turns), trapped access, airlock rotation, corridor not adjacent to the network, dome without an entrance on the network, exterior access cell on a corridor, corridor ring enclosing a deposit, corridor strip that is not 2 cells wide, corridor strip partly unaffordable, disconnected service, insufficient cost, interrupted Engineer, invalid ghost cancellation, atomic cost/occupancy. |
+| Dome presence | Hidden flag and occupant list set on arrival at an entrance and cleared on leaving, death or role change; hidden colonists cannot be picked; occupants count as indoor for oxygen. |
 | Economy scenarios | Exact JSON bootstrap order; live population 12→100; water/food/power demand at 100/200; multiple Storage capacity; Aurite throughput to 300; storage saturation recovery; deliberate unrecoverable shortage to defeat. |
 | Arrivals/outcomes | One batch per action, final partial batch, no passenger replenishment, full spawn cells rollback, both victory orders, defeat precedence if last death and Beacon complete in one tick. |
 | UI/input | UI consumes world click; left/right/Escape build behavior; R rotation; resize/high-DPI conversion; camera controls in/past placement mode; reason shown for each rejected command. |
@@ -1337,12 +1441,12 @@ Keep the simulation callable without creating a window or loading GPU assets. Th
 
 ### E3. Manual integration tests
 
-1. **Bootstrap:** from the exact `scenario.json` inventory and spawn cells, construct Exit Door, Storage, Solar Panel, Water Extractor and Oxygenator before suit reserves fail; repeat from a fresh run at least 20 deterministic seeds if any scenario randomness is added (MVP default is fixed/no randomness).
+1. **Bootstrap:** from the exact `scenario.json` inventory and spawn cells, construct the Exit Door, the first corridor cells, Storage, Solar Panel, Water Extractor and Oxygenator before suit reserves fail; repeat from a fresh run at least 20 deterministic seeds if any scenario randomness is added (MVP default is fixed/no randomness).
 2. **Production:** staff both mines and all three processor types; verify each input/output.
 3. **Survival:** deliberately remove each supply independently and observe interruption, attempted recovery and eventual death.
 4. **Population:** reach 100 and then 200 living colonists while maintaining the required Oxygenators, food, water and power; report the actual number of each service building.
 5. **Capacity:** accumulate 300 Aurite with the configured Storage count, full resource production and no resource deletion, negative stock or irreversible saturation.
-6. **Controls:** build, rotate, select, cancel and zoom at window corners and after resize.
+6. **Controls:** build, rotate, drag a 2-cell corridor strip, select, cancel and zoom at window corners and after resize; select a hidden colonist from a dome's occupant list.
 7. **Lifecycle:** win, restart, lose, restart, return to menu and close the window.
 8. **Deployment:** launch from the packaged directory without developer paths.
 
@@ -1383,7 +1487,8 @@ The slides' historical runtime/deadline details should be checked against the ac
 - [ ] MVP-01: one roofless map, visible iron and copper.
 - [ ] MVP-02: pan, orbit and zoom work after resize.
 - [ ] MVP-03: correct world picking and popup selection.
-- [ ] MVP-04: all 13 buildings can be paid for, placed and completed.
+- [ ] MVP-04: all 13 buildings and the corridors can be paid for, placed and completed.
+- [ ] The base is built as domes joined by 2-cell corridors; colonists are visible in corridors, walk on the passage axis without cutting through walls or the door frame, are hidden inside domes and are listed in each dome's popup.
 - [ ] MVP-05: autonomous navigation and nearest eligible job assignment work.
 - [ ] MVP-06: all three roles can be assigned through UI.
 - [ ] MVP-07: all three needs interrupt/refill at threshold and kill at zero.
@@ -1420,9 +1525,9 @@ File names below refer to the proposed tree in C9.
 |---|---|---|---|---|
 | MVP-01 | MVP p. 1 | P02, P03, P07 | Map, catalog, world | Roofless map with visible deposits. |
 | MVP-02 | MVP p. 1; GDD p. 9 | P04 | Strategy camera, Game | Pan/orbit/zoom and resize test. |
-| MVP-03 | MVP pp. 1–2 | P04, P10 | World picking, UI | Correct nearest selection; UI consumes clicks. |
-| MVP-04 | MVP p. 1 | P07 | Definitions, simulation, navigation, UI | All 13 buildings constructed legally. |
-| MVP-05 | MVP p. 1 | P03, P05–P07 | Navigation, scheduler, reservations | Reachable nearest job; no slot overflow. |
+| MVP-03 | MVP pp. 1–2 | P04, P05B, P10 | World picking, UI | Correct nearest selection; UI consumes clicks; dome occupants selectable from the popup. |
+| MVP-04 | MVP p. 1 | P05B, P07 | Definitions, simulation, navigation, UI | All 13 buildings and corridors constructed legally. |
+| MVP-05 | MVP p. 1 | P03, P05, P05B, P06, P07 | Navigation, scheduler, reservations | Reachable nearest job; no slot overflow. |
 | MVP-06 | MVP p. 1 | P05, P10 | Commands, UI, simulation | Role change releases/reassigns task. |
 | MVP-07 | MVP p. 1 | P06 | Needs, services, movement | Threshold interruption/refill/death tests. |
 | MVP-08 | MVP p. 1; GDD pp. 3–7 | P06, P07 | Utilities, building status | Shortage behavior matches HUD. |
@@ -1451,7 +1556,7 @@ The proposed architecture accommodates the final design through specific additio
 | Priorities | Extend candidate ranking before route-distance comparison. |
 | Robot/Charge Pad | Separate robot record/controller with battery and exploration tasks. |
 | Hidden/finite deposits | Discovery state and remaining-yield fields. |
-| Roof fading | Separate roof render group; no simulation rewrite. |
+| Roof fading / visible dome interiors | Replace the hidden-presence rule with walkable dome interiors (blocked machine cells plus walls between structures) and a separate roof render group; occupants are already tracked per dome. |
 | Animated colonists | Replace rigid visual adapter with `Animator`-driven views. |
 | Final rocket behavior | Arrival service changes batch size/timing/animation. |
 | Final victory | Replace living-count predicate with Healthy-count predicate. |
@@ -1467,11 +1572,12 @@ This supports extension without claiming that later mechanics are already implem
 | Arrivals | One explicit Landing Pad action spawns up to 10 passengers on the pad's free access cells; final partial batch allowed. Population cap is available exterior spawn cells and simulation stability, not an arbitrary hidden cap. | P09 |
 | Power shortage | All-or-nothing consumer allocation for MVP; report deficit and stopped consumers. | P06, HUD |
 | Water | Continuous flow, no reservoir/item; use allocation order and costs specified in C7. | P06, HUD |
-| Exit Door | A completed, enabled door gives passage; power plus base oxygen coverage only enable the suit refill. | P06, P07 |
-| Food and water points | Storage access cells (`eat`/`drink` services in `buildings.json`). | P06 |
-| Building data | `buildings.json` with all 13 definitions from P05; never a C++ table. | P05–P08 |
-| Grid | 64×64, 1 m cells, XZ world, 1 m cell centers; fixed interior rectangle, 2-cell west door socket, deposits and start cluster from C5, all in `scenario.json`. | P03, P07 |
-| Building placement | Integer-cell rectangular footprints `[w, h]` and access offsets at 0° in `buildings.json`, rotated by the shared quarter-turn transform of C5; mines must contain their deposit; grid is collision authority. | P05, P07 |
+| Base layout | Separate domes joined by 2-cell corridors with an open arched roof (27 Nov 2026). Inside cells come only from completed Corridors and Exit Door chambers. Module sizes and view rules are fixed in C5.2. Colonists at a dome entrance are hidden and listed in the dome popup; dome interiors are not walkable. | P05B–P07 |
+| Exit Door | 2×3 walkable airlock placed anywhere outside, 2 cells wide, two crossings, no socket. A completed, enabled door gives passage; power plus base oxygen coverage only enable the suit refill. | P05B, P06, P07 |
+| Food and water points | Storage entrances (`eat`/`drink` services in `buildings.json`). | P06 |
+| Building data | `buildings.json` with the 13 MVP definitions from P05 plus Corridor from P05B; never a C++ table. | P05–P08 |
+| Grid | 64×64, 1 m cells, XZ world, 1 m cell centers; deposits and start cluster from C5 in `scenario.json`; no predefined base region. | P03, P05B, P07 |
+| Building placement | Integer-cell rectangular footprints `[w, h]` and access offsets at 0° in `buildings.json`, rotated by the shared quarter-turn transform of C5; Corridor and Exit Door footprints are walkable, all others block; mines must contain their deposit; corridors must not enclose exterior targets; grid is collision authority. | P05, P05B, P07 |
 | Content source | `assets.json`, `buildings.json`, `colonists.json`, `materials.json`, `scenario.json`, `scene.json` are authoritative (`scene.json` is generated from `scenario.json` by `tools/generate_arkfall_scene.py`); no duplicated C++ constants. | P02–P07 |
 | Scene parser | Complete and use `src/game/scene_parser.*` for static `scene.json`; `ScenarioLoader` handles simulation/map state. | P02, P03 |
 | Initial balance | C8 values are starting JSON values. Tune JSON only (not architecture) until bootstrap, 100-colonist, Aurite and defeat scenarios pass E3. | P05–P09 |
