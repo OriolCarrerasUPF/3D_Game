@@ -206,7 +206,8 @@ TEST_CASE("shipped data: every dev scenario starts on the shipped map")
 	CHECK(definitions.colonists.load("data/arkfall/colonists.json"));
 	CHECK(definitions.buildings.load("data/arkfall/buildings.json"));
 	for (const char* path : { "data/arkfall/dev/production.json", "data/arkfall/dev/p03_navigation.json",
-			"data/arkfall/dev/base_layout.json" })
+			"data/arkfall/dev/base_layout.json", "data/arkfall/dev/survival.json",
+			"data/arkfall/dev/dome_chain.json" })
 	{
 		const ScenarioLoadResult dev = ScenarioLoader().load(path);
 		CHECK(dev);

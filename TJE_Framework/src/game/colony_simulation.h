@@ -18,10 +18,20 @@
 // on inside cells), and a colonist present at a dome entrance is inside that dome
 // (current_dome), which the view hides and the dome popup lists.
 //
-// Tick order (P05 subset of the P06 order in the plan):
-//   1. every colonist: validate its reservation, replan after map changes, choose a
-//      job when idle (colonist-ID order), move, arrive;
-//   2. every building (building-ID order): advance production and commit cycles.
+// P06 (plan C6/C7): Hunger, Thirst and Oxygen decay and kill at 0; a need at or below
+// the threshold interrupts work for the best reachable service (eat/drink at Storage
+// entrances, suit refill in a powered airlock chamber while the base has oxygen); one
+// UtilitySnapshot per tick (all-or-nothing power, water allocated drinkers first, then
+// Oxygenators, then Greenhouses; indoor oxygen coverage); idle colonists wait inside a
+// dome (hidden) or in the base instead of outside.
+//
+// Tick order (plan P06):
+//   1. utilities: one UtilitySnapshot read by everything below;
+//   2. every colonist: decay needs, mark deaths (releasing their slots);
+//   3. every colonist (colonist-ID order): validate work/service, interrupt work for an
+//      urgent need, choose a job or an idle spot, move, arrive;
+//   4. services (drinking, eating, suit refill) and building production (ID order).
+//   Commands are applied by Game before the ticks; outcomes arrive in P09.
 //
 // Theory reuse (T13): state machine with explicit states and transitions (C6.1),
 // grid pathfinding and nearest-target search (BFS findNearest).
@@ -48,6 +58,25 @@ struct WorkReservation
 	bool active() const { return building != INVALID_BUILDING; }
 };
 
+// Utility state of one tick (plan C7), computed once at the start of the tick.
+struct UtilitySnapshot
+{
+	float power_generated = 0.0f;
+	float power_demand = 0.0f;
+	bool powered = false;              // all-or-nothing: generation covers the whole demand
+	float water_produced = 0.0f;       // powered extractors, units per second
+	float water_for_drinking = 0.0f;
+	float water_for_buildings = 0.0f;
+	int drinkers_served = 0;
+	int drinkers_waiting = 0;          // drinking but not allocated this tick (shortage)
+	int oxygen_capacity = 0;           // operational Oxygenators
+	int indoor_population = 0;         // living colonists on inside cells (domes and corridors)
+	bool oxygen_covered = false;       // capacity > 0 and it covers everyone indoors
+	std::vector<BuildingId> stopped;   // consumers stopped by a power or water shortage
+
+	float waterUsed() const { return water_for_drinking + water_for_buildings; }
+};
+
 struct ColonistRecord
 {
 	ColonistId id = INVALID_COLONIST;
@@ -71,13 +100,33 @@ struct ColonistRecord
 
 	// P05 work: the reserved slot and the access cell walked to / worked at.
 	WorkReservation reservation;
-	// P05B: the dome whose entrance the colonist is present at (working there; P06 adds
-	// refilling and idle waiting), or INVALID_BUILDING. The view hides such colonists.
+	// P05B: the building the colonist is inside, or INVALID_BUILDING: a dome whose entrance
+	// it stands at (working, refilling or idle-waiting) or, since P06, an exterior building
+	// (a mine) it works at. The view hides such colonists.
 	BuildingId current_dome = INVALID_BUILDING;
 	Cell work_cell;
 	float job_retry_timer = 0.0f;     // time until an idle colonist looks for work again
 	std::uint64_t evaluated_work_revision = std::numeric_limits<std::uint64_t>::max();
 	std::uint64_t evaluated_grid_revision = std::numeric_limits<std::uint64_t>::max();
+
+	// P06 services: the need being refilled and where (Storage entrance or airlock chamber).
+	bool in_service = false;
+	NeedType service_need = NeedType::Oxygen;
+	BuildingId service_building = INVALID_BUILDING;
+	Cell service_cell;
+	float service_timer = 0.0f;       // eating progress
+	bool meal_taken = false;          // the vegetable is taken when eating starts
+	bool water_allocated = false;     // drinking water allocated in this tick's snapshot
+	float service_retry_timer = 0.0f; // urgent need without a service: time until the next try
+	std::uint64_t service_work_revision = std::numeric_limits<std::uint64_t>::max();
+	std::uint64_t service_grid_revision = std::numeric_limits<std::uint64_t>::max();
+	std::string need_alert;           // "needs water: ..." while an urgent need has no service
+	// P06 idle rule: where an idle colonist waits (a dome entrance, else an inside cell).
+	bool has_idle_target = false;
+	Cell idle_cell;
+	BuildingId idle_dome = INVALID_BUILDING;
+	std::uint64_t idle_grid_revision = std::numeric_limits<std::uint64_t>::max();
+	std::string death_cause;          // "thirst", "hunger", "lack of oxygen"
 
 	// Temporary P03 scripted route.
 	bool has_debug_route = false;
@@ -99,7 +148,9 @@ enum class BuildingStatus : std::uint8_t
 	NoWorkers,      // operation needs workers and none is present
 	MissingInput,   // recipe inputs are not in the inventory
 	StorageFull,    // the output does not fit in the item capacity
-	Disabled
+	Disabled,
+	NoPower,        // P06: power demand not covered (all-or-nothing brownout)
+	NoWater         // P06: its water flow could not be allocated
 };
 
 struct BuildingRecord
@@ -124,6 +175,10 @@ struct BuildingRecord
 	std::vector<ColonistId> slots;        // operating slot owners (INVALID_COLONIST = free)
 	float production_progress = 0.0f;     // work-seconds in the current cycle
 	long long cycles_completed = 0;
+	// P06 utilities, from this tick's snapshot.
+	bool powered = false;                 // no demand, or the colony's generation covers all demand
+	bool water_supplied = false;          // no demand, or its full flow was allocated
+	bool operational = false;             // complete, enabled, powered and supplied
 	BuildingStatus status = BuildingStatus::Idle;
 	std::string status_text;              // blocking reason / state for the UI
 
@@ -193,6 +248,8 @@ public:
 
 	// ---- P05B: base network and domes ----------------------------------------------
 	// A cell that a Corridor or an Exit Door (complete or planned) turns inside.
+	bool isPassageCell(Cell cell) const;
+	// A passage cell or a cell of a dome footprint (walkable domes are part of the base).
 	bool isNetworkCell(Cell cell) const;
 	// The building whose footprint covers the cell, or nullptr.
 	const BuildingRecord* buildingAt(Cell cell) const;
@@ -201,8 +258,26 @@ public:
 	// Access cells usable for work and services: every access cell of an exterior
 	// building; for a dome only its entrances (access candidates on inside cells).
 	std::vector<Cell> usableAccessCells(const BuildingRecord& building) const;
-	// Living colonists present inside the dome (current_dome), in colonist-ID order.
+	// Living colonists inside the building (current_dome: a dome, or an exterior building
+	// while working there), in colonist-ID order.
 	std::vector<ColonistId> occupants(BuildingId dome) const;
+
+	// ---- P06: needs, services and utilities ----------------------------------------
+	const UtilitySnapshot& getUtilities() const { return utilities; }
+	const NeedRules& getNeedRules() const { return definitions.colonists.getNeedRules(); }
+	int countLiving() const;
+	// Current drain of one need for this colonist (0 while supplied: base oxygen
+	// coverage indoors, a powered mine while working there).
+	float currentDrain(const ColonistRecord& colonist, NeedType need) const;
+	// A completed, open Exit Door that is powered while the base has oxygen coverage:
+	// its chamber refills suits (plan C6.1).
+	bool doorRefillsSuits(const BuildingRecord& building) const;
+	// Cells where the need can be refilled now, in building-ID order (owners parallel).
+	std::vector<Cell> serviceTargets(NeedType need, std::vector<BuildingId>* owners = nullptr) const;
+	// Why no service exists for the need ("" when one exists).
+	std::string serviceUnavailableReason(NeedType need) const;
+	static float needValue(const NeedValues& needs, NeedType need);
+	static const char* needLabel(NeedType need);   // "oxygen", "water", "food"
 
 	// Changes a colonist's role, releasing its work slot first (plan C6.1).
 	bool assignJob(ColonistId id, Job job, std::string& reason);
@@ -236,6 +311,23 @@ private:
 	bool isCellReservedByColonist(Cell cell) const;
 	bool isUsableAccess(const BuildingRecord& building, Cell cell) const;
 	void updatePresence(ColonistRecord& colonist);
+	// Ends the current step at a cell centre (never between two cells).
+	void stopAtCellCentre(ColonistRecord& colonist);
+
+	// P06 utilities, needs and services.
+	void computeUtilities();
+	void decayNeeds(ColonistRecord& colonist, float dt);
+	void killColonist(ColonistRecord& colonist, NeedType cause);
+	bool isSuppliedByMine(const ColonistRecord& colonist) const;
+	bool startService(ColonistRecord& colonist, std::string& reason);
+	bool isServiceStillValid(const ColonistRecord& colonist) const;
+	void arriveAtService(ColonistRecord& colonist);
+	void endService(ColonistRecord& colonist, bool finished, const std::string& reason);
+	void performServices(float dt);
+	void updateIdleTarget(ColonistRecord& colonist, const std::string& reason);
+	bool isIdleTargetValid(const ColonistRecord& colonist) const;
+	// Outdoor job check (plan C6): the suit must last the trip out and back to a refill point.
+	bool suitAllowsOutdoorJob(const ColonistRecord& colonist, Cell job_cell, const std::vector<Cell>& path_to_job) const;
 
 	// Work slots (plan C6/C6.1).
 	bool isWorkplaceFor(const BuildingRecord& building, Job job) const;
@@ -262,8 +354,11 @@ private:
 	bool uses_cargo_capacity = true;
 	BuildingId next_building_id = 1;
 	std::uint64_t work_revision = 0;
+	UtilitySnapshot utilities;
+	std::uint64_t utility_signature = 0;
 	std::set<std::pair<int, int>> debug_obstacles;
 	double simulation_time = 0.0;
 	bool initialized = false;
 	std::vector<Cell> path_scratch;
+	mutable std::vector<Cell> return_scratch;
 };

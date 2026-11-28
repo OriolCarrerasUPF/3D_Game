@@ -1,8 +1,8 @@
 # ARKFALL: MVP Implementation Plan
 
-**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04) · **Status update:** 25 November 2026 (P05 done) · **Base layout change:** 27 November 2026 (domes joined by corridors, new step P05B)  
+**Planning date:** 8 November 2026 · **Last review:** 24 November 2026 (before P04) · **Status update:** 25 November 2026 (P05 done) · **Base layout change:** 27 November 2026 (domes joined by corridors, new step P05B) · **Status update:** 27 November 2026 (P06 done)  
 **Project:** `repo_compartido/TJE_Framework`  
-**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P05 are implemented (step reports in `steps_reports/`: [P03_navigation_report.md](steps_reports/P03_navigation_report.md), [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md), [P05_production_report.md](steps_reports/P05_production_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](steps_reports/P02_asset_report.md). The base layout change of 27 November 2026 and the plan review of 24 November are summarised in the next two sections.
+**Status:** revised technical implementation plan based on the supplied design documents, theory references and inspected framework source. P01–P06 are implemented, including P05B (step reports in `steps_reports/`: [P03_navigation_report.md](steps_reports/P03_navigation_report.md), [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md), [P05_production_report.md](steps_reports/P05_production_report.md), [P05B_base_layout_report.md](steps_reports/P05B_base_layout_report.md), [P06_survival_report.md](steps_reports/P06_survival_report.md)); the pre-P03 corrections of 24 November 2026 are recorded in [P02_asset_report.md](steps_reports/P02_asset_report.md). The base layout change of 27 November 2026 and the plan review of 24 November are summarised in the next two sections.
 
 The recommended implementation is a **single-map colony simulation using the existing SDL/OpenGL framework, a 1 m planar navigation grid, autonomous colonist state machines, and JSON-driven scene, scenario, asset, building, colonist and material definitions**.
 
@@ -23,7 +23,7 @@ Sections A2–A4 describe the framework baseline inspected on 8 November, before
 
 **Team decision:** the base is no longer one fixed rectangle surrounded by walls. As in Planet Base, every interior building is its own closed dome, and the crew joins the domes with corridors. To keep the change affordable, the inside of a dome is not simulated as walkable space:
 
-- A dome is a solid, static model. Its footprint blocks navigation exactly like a P05 building footprint.
+- A dome is a solid, static model. Its footprint blocks navigation exactly like a P05 building footprint. **Changed in P06 (team decision, 27 Nov 2026): domes are walkable rooms** — see C5.
 - A colonist who reaches a dome entrance to work, eat, drink or wait is hidden. The simulation records which dome the colonist is in, and the dome popup lists everyone inside and what they are doing.
 - Corridors are roofless and visible, so colonists can be seen walking between the Exit Door and the domes.
 
@@ -55,8 +55,9 @@ The whole plan was re-checked against the MVP Scope, the GDD and the code on `ma
 | P04 | Done | [P04_camera_ui_report.md](steps_reports/P04_camera_ui_report.md); 69 headless test cases pass in Debug. |
 | P05 | Done | [P05_production_report.md](steps_reports/P05_production_report.md); 95 headless test cases pass (Linux g++ headless build). |
 | P05B | Done | [P05B_base_layout_report.md](steps_reports/P05B_base_layout_report.md); 102 headless test cases pass (Windows Debug). |
-| P06 | Next | — |
-| P07–P11 | Pending | — |
+| P06 | Done | [P06_survival_report.md](steps_reports/P06_survival_report.md); 119 headless test cases pass (Windows Debug). Need tuning lives in `colonists.json` (`needs`). |
+| P07 | Next | — |
+| P08–P11 | Pending | — |
 
 ### Corrections made by this review
 
@@ -640,7 +641,7 @@ Use a **64×64 XZ grid with 1 m cells** as the MVP world coordinate system. The 
 - The boundary is modelled on cell **edges**, not cells: every cell is classified as inside or outside, and a step between an inside and an outside cell is allowed only through an open Exit Door crossing. Corridor walls are drawn by the view on these edges and are visual only; they never remove inside or outside cells. Neighbouring inside cells always connect, so two corridors laid side by side form one wider corridor. This is harmless because air, power and water are global.
 - An **Exit Door is an airlock building** with a 2×3 walkable footprint, 2 cells wide like the corridors. At 0°, row `z = 0` is the outside apron, and rows `z = 1..2` are the chamber; every offset rotates with the shared quarter-turn transform. When the door completes, the chamber becomes inside and `NavigationGrid` registers the two apron-to-chamber edges, `(0,0)→(0,1)` and `(1,0)→(1,1)`, as the door's crossings. The far end of the chamber (row 2) opens onto a corridor. Only a completed, enabled door permits crossing; power and base oxygen only gate the suit refill on inward crossing (C6), never passage.
 - A **Corridor** record is one walkable 1×1 cell; corridors are laid as **2-cell-wide strips** (P07), which fit the 1.10 m astronaut (C5.2). A Corridor cell must be 4-adjacent to the base network (a completed or planned Corridor or Exit Door chamber cell), or to an earlier cell of the same placed strip that is.
-- **Domes** are the interior buildings (Storage, Oxygenator, Greenhouse and the three Processors). Their footprints block their cells like any footprint and stand on outside cells. Their access offsets are **entrance candidates**: a candidate on an inside cell is an entrance. A dome needs at least one candidate on the base network when it is placed. Work and services use entrances only, and construction may use any walkable candidate. A colonist present at an entrance is inside the dome and hidden (C6).
+- **Domes** are the interior buildings (Storage, Oxygenator, Greenhouse and the three Processors). They stand on outside cells. **Walkable domes (team decision, P06):** when a dome completes, its footprint cells become inside cells of a *room* (room id = building id) that colonists may cross, so a base can chain door → corridor → dome → corridor → dome. A step into or out of a room is allowed only through a room opening, the edge between an entrance candidate and its footprint neighbour; a corridor running along a dome wall therefore never leaks into it, and an outside cell never leads in. A colonist crossing a dome is hidden and listed as its occupant; the inside is still not simulated as space. A corridor joins the network next to a corridor or a chamber, or on a dome entrance candidate. A dome entrance may not lie on another dome (`access_blocked`). For the corridor view the dome cells count as not inside, so walls stay along the dome except at its entrances. A dome blueprint (P07) keeps its footprint blocked until it completes. Their access offsets are **entrance candidates**: a candidate on an inside cell is an entrance. A dome needs at least one candidate on the base network when it is placed. Work and services use entrances only, and construction may use any walkable candidate. A colonist present at an entrance is inside the dome and hidden (C6).
 - Exterior buildings keep their footprint and access cells on outside cells that are not Corridor or Exit Door cells.
 - Decorative objects only block navigation when explicitly marked.
 
@@ -724,7 +725,7 @@ Unavailable services must not produce busy loops. Release stale reservations, ke
 
 Idle: a colonist with no eligible task and no urgent need walks to the nearest reachable entrance of a completed dome and waits there, inside that dome. With no completed dome it waits on the nearest reachable inside cell that is not a door cell; with no reachable inside cell (no door yet) it waits where it stands. Either way it does not drain its suit outside. Colonists may share cells (C5).
 
-**Presence in domes (base layout change of 27 Nov 2026).** A colonist standing at an entrance of a completed dome while `Working` there, `Refilling` there or idle-waiting there is inside that dome. The simulation stores that dome's ID per colonist and exposes `occupants(BuildingId)`. The view hides such colonists and they cannot be picked; the dome popup lists them with their activity, and selecting a name opens their popup. The colonist is visible again as soon as it leaves the entrance. Being in a dome changes nothing else: the colonist is on an inside cell, so it counts as indoor for oxygen coverage like any colonist in a corridor.
+**Presence in domes (base layout change of 27 Nov 2026).** A colonist standing at an entrance of a completed dome while `Working` there, `Refilling` there or idle-waiting there is inside that dome. The simulation stores that dome's ID per colonist and exposes `occupants(BuildingId)`. The view hides such colonists and they cannot be picked; the dome popup lists them with their activity, and selecting a name opens their popup. The colonist is visible again as soon as it leaves the entrance. Being in a dome changes nothing else: the colonist is on an inside cell, so it counts as indoor for oxygen coverage like any colonist in a corridor. **Exterior buildings (team decision, 27 Nov 2026, P06):** a colonist `Working` at an access cell of a complete exterior building (a mine) is also inside that building: hidden, not pickable and listed in its popup, which shows the workers still on their way on one line. It stays outside for oxygen (the mine's local supply applies), and it is visible again as soon as it stops working there.
 
 #### C6.1 Deterministic colonist state transitions
 
@@ -875,9 +876,9 @@ TJE_Framework/
 │   │   ├── scenario.json                   [N: grid, deposits, start state; base block removed P05B]
 │   │   ├── assets.json                     [N: asset paths/transforms/shaders]
 │   │   ├── buildings.json                  [N: 13 building definitions — done P05; Corridor P05B]
-│   │   ├── colonists.json                  [N: role visuals/speed — P03; names done P05]
+│   │   ├── colonists.json                  [N: role visuals/speed — P03; names done P05; need tuning done P06]
 │   │   ├── materials.json                  [N: semantic palette/tints]
-│   │   ├── dev/*.json                      [N: dev/test scenarios — production.json done P05; base_layout, p03_navigation done P05B]
+│   │   ├── dev/*.json                      [N: dev/test scenarios — production.json done P05; base_layout, p03_navigation done P05B; survival done P06]
 │   │   ├── models/*.obj / *.mtl             [N: selected runtime copies]
 │   │   └── License.txt                     [N: copied asset license]
 │   ├── shaders/
@@ -897,8 +898,9 @@ TJE_Framework/
     ├── camera_and_picking, ui tests        [N: done P04]
     ├── building, production tests          [N: done P05]
     ├── base_layout tests                   [N: done P05B]
-    └── survival, construction, economy
-        and outcome tests                   [N: P06–P11]
+    ├── survival tests                      [N: done P06]
+    └── construction, economy
+        and outcome tests                   [N: P07–P11]
 ```
 
 Keep new gameplay sources directly in `src/game`, which existing CMake already scans. The separate `arkfall_tests` target compiles only the headless sources listed in `ARKFALL_HEADLESS_SOURCES`; every new headless source is added there together with its tests. Pin and vendor the single-header `nlohmann/json` dependency under `libraries/nlohmann_json/`, record its exact version and license, and include it through CMake. Do not hand-roll JSON tokenization or use the framework `TextParser` for JSON.
@@ -1243,7 +1245,8 @@ Use a **temporary developer scenario** (`data/arkfall/dev/production.json`) with
 ### P06 — Add survival and utility dependencies
 
 **Covers:** MVP-07, MVP-08, MVP-11 and MVP-14 foundation.  
-**Dependencies:** P05B.
+**Dependencies:** P05B.  
+**Status:** done (27 Nov 2026), see [P06_survival_report.md](steps_reports/P06_survival_report.md). Decisions made there: the need tuning lives in `colonists.json` (`needs`); the suit refill point is the airlock chamber of a powered door while the base has oxygen; with no service available a colonist keeps its task.
 
 **Files:** `TJE_Framework/src/game/colony_simulation.h/.cpp`, `TJE_Framework/src/game/arkfall_types.h`, `TJE_Framework/src/game/building_catalog.h/.cpp`, `TJE_Framework/src/game/colony_ui.h/.cpp`, `TJE_Framework/src/game/scenario_loader.h/.cpp`, `TJE_Framework/data/arkfall/{buildings,colonists,scenario}.json`, `TJE_Framework/data/arkfall/dev/survival.json`, `TJE_Framework/tests/survival_tests.cpp`.
 
@@ -1303,6 +1306,8 @@ A building completed during a tick becomes operational on the next tick. Use thi
 Construction payment occurs once at placement. Canceling the unplaced ghost is free. For MVP, placed blueprints cannot be demolished/canceled; say this in the UI rather than implying a refund mechanic.
 
 **Acceptance:** all 13 types and corridors can be constructed; mines require matching deposits; no placement encloses an exterior target, blocks the only door or traps a worker. Initial cargo can establish the first life-support and production chain without cheats.
+
+**Suit check for construction (team decision, 27 Nov 2026).** Construction jobs go through the same outdoor-job suit check as work (P06 `suitAllowsOutdoorJob`): an Engineer does not walk to an outside construction access cell when its suit cannot last the trip there and back to a refill point above the threshold. Unlike P06 work selection, the check depends on the **cell**, not the building type: a dome built from an outside candidate is an outdoor job too. **Exception:** the check is skipped when staying inside would not save the colonist, i.e. the base has no oxygen coverage (`UtilitySnapshot::oxygen_covered` is false), so the suit drains at the same rate inside and out. Without it, a base whose Oxygenators lost power could deadlock: the Solar Panel that fixes it is an outdoor job no Engineer below 20 would accept. A dome blueprint prefers an inside entrance candidate as its construction cell when one is reachable. Tests: an Engineer with Oxygen below 20 refuses an outdoor blueprint while the base is covered, accepts it while the base has no coverage, and builds a dome from an inside candidate when both exist.
 
 **Risk:** a blueprint blocks its own builder. Access cells must be outside occupied footprints. A corridor ring can enclose a deposit or a mine, which the `enclosed` check must reject before payment. The first Exit Door must be constructible from its outer side before any inside cell exists.
 
@@ -1409,7 +1414,7 @@ Do not copy example shader/picking signatures from the slides without checking c
 | **H4 — Complete gameplay MVP** | P09–P10 | Grow population, win, lose and restart through UI. |
 | **H5 — Academic delivery** | P11 | Sound, completeness, Release validation and distributable package. |
 
-**Status (27 Nov 2026):** H0 and H1 complete (P01–P04); H2 in progress (P05 and P05B done, P06 next).
+**Status (27 Nov 2026):** H0, H1 and H2 complete (P01–P06, including P05B); H3 next (P07).
 
 **Critical path:** navigation → reservations/task interruption → survival/services → construction → complete economy → population/outcomes.
 
@@ -1417,7 +1422,7 @@ Asset detailing, richer animation and advanced rendering must not delay H1–H4.
 
 ### E2. Automated checks worth implementing
 
-Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 95 cases after P05, covering data loading, shipped data, transforms/timing, navigation, P03 movement, commands, camera, picking, UI input, building data, placement, reservations, production and transactions.
+Use a separate test executable with explicit failure reporting; do not rely only on `assert`, which may be disabled in Release. Implemented: `arkfall_tests` (CTest), 119 cases after P06, covering data loading, shipped data, transforms/timing, navigation, P03 movement, commands, camera, picking, UI input, building data, placement, reservations, production and transactions.
 
 | Test group | Essential cases |
 |---|---|
@@ -1572,7 +1577,7 @@ This supports extension without claiming that later mechanics are already implem
 | Arrivals | One explicit Landing Pad action spawns up to 10 passengers on the pad's free access cells; final partial batch allowed. Population cap is available exterior spawn cells and simulation stability, not an arbitrary hidden cap. | P09 |
 | Power shortage | All-or-nothing consumer allocation for MVP; report deficit and stopped consumers. | P06, HUD |
 | Water | Continuous flow, no reservoir/item; use allocation order and costs specified in C7. | P06, HUD |
-| Base layout | Separate domes joined by 2-cell corridors with an open arched roof (27 Nov 2026). Inside cells come only from completed Corridors and Exit Door chambers. Module sizes and view rules are fixed in C5.2. Colonists at a dome entrance are hidden and listed in the dome popup; dome interiors are not walkable. | P05B–P07 |
+| Base layout | Separate domes joined by 2-cell corridors with an open arched roof (27 Nov 2026). Inside cells come only from completed Corridors and Exit Door chambers. Module sizes and view rules are fixed in C5.2. Colonists at a dome entrance, crossing a dome or working at an exterior building are hidden and listed in its popup; completed domes are walkable rooms entered only through their entrances (P06). | P05B–P07 |
 | Exit Door | 2×3 walkable airlock placed anywhere outside, 2 cells wide, two crossings, no socket. A completed, enabled door gives passage; power plus base oxygen coverage only enable the suit refill. | P05B, P06, P07 |
 | Food and water points | Storage entrances (`eat`/`drink` services in `buildings.json`). | P06 |
 | Building data | `buildings.json` with the 13 MVP definitions from P05 plus Corridor from P05B; never a C++ table. | P05–P08 |

@@ -23,6 +23,7 @@
     {"type": "corridor", "from": [25, 30], "to": [30, 31]},
     {"type": "corridor", "from": [29, 32], "to": [30, 37]},
     {"type": "storage", "origin": [26, 32], "quarterTurns": 0},
-    {"type": "iron_processor", "origin": [31, 34], "quarterTurns": 0}
+    {"type": "iron_processor", "origin": [31, 34], "quarterTurns": 0},
+    {"type": "solar_panel", "origin": [40, 50], "quarterTurns": 0}
   ]
 }

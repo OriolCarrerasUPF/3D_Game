@@ -12,6 +12,10 @@
 // * findPath/findNearest run a breadth-first search (all steps cost 1, so BFS gives
 //   shortest routes). Neighbour order is fixed (+X, -X, +Z, -Z) so results are
 //   deterministic. The scratch buffers are reused between searches.
+// * Rooms (walkable domes, P06): a cell may belong to a room (a dome footprint, room id
+//   = building id). A step between cells of different rooms (or a room and no room) is
+//   only allowed through a registered room opening (a dome entrance edge), so a corridor
+//   running along a dome wall never leaks into it.
 // * Every change that can invalidate a route increments getRevision().
 //
 // Theory reuse (T13 pp. 18-21, 31): grid pathfinding on a flat world. The framework's
@@ -22,6 +26,7 @@
 
 #include <cstdint>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 class NavigationGrid
@@ -58,6 +63,14 @@ public:
 	void setZone(Cell cell, Zone zone);
 	Zone getZone(Cell cell) const;
 
+	// ---- Rooms (walkable domes) --------------------------------------------
+	// Room id of a cell (0 = none). Bumps the revision only when it changes.
+	void setRoom(Cell cell, std::uint32_t room);
+	std::uint32_t getRoom(Cell cell) const;
+	// Allows the step a-b between two neighbouring cells of different rooms.
+	void addRoomOpening(Cell a, Cell b);
+	bool isRoomOpening(Cell a, Cell b) const;
+
 	// ---- Exit Doors --------------------------------------------------------
 	// Registers a door made of one or more crossings. Each crossing must join two
 	// 4-neighbour cells in different zones (the caller/loader validates this).
@@ -70,8 +83,9 @@ public:
 	bool isDoorCrossing(Cell a, Cell b) const;
 
 	// ---- Movement rules -----------------------------------------------------
-	// One 4-neighbour step: both cells walkable; if the zones differ the edge must
-	// be a crossing of an open door. Diagonal or longer steps are never allowed.
+	// One 4-neighbour step: both cells walkable; between different rooms the edge must be
+	// a room opening; if the zones differ the edge must be a crossing of an open door.
+	// Diagonal or longer steps are never allowed.
 	bool canStep(Cell from, Cell to) const;
 
 	// Shortest 4-neighbour route including start and goal. Clears out_path first.
@@ -110,6 +124,8 @@ private:
 
 	std::vector<std::uint8_t> blocked;
 	std::vector<Zone> zones;
+	std::vector<std::uint32_t> rooms;
+	std::unordered_set<std::uint64_t> room_openings;
 	std::vector<Door> doors;
 	std::unordered_map<std::uint64_t, DoorIndex> crossing_to_door;
 

@@ -1,0 +1,26 @@
+{
+  "schemaVersion": 1,
+  "grid": {"width": 64, "height": 64, "cellSize": 1.0, "originXZ": [-32.0, -32.0]},
+  "deposits": [
+    {"id": "iron_deposit", "resource": "iron", "cell": [8, 12]},
+    {"id": "copper_deposit", "resource": "copper", "cell": [55, 12]}
+  ],
+  "staticBlockers": [],
+  "initialColonists": [
+    {"id": 1, "job": "miner", "cell": [17, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 2, "job": "miner", "cell": [18, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 3, "job": "miner", "cell": [17, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}},
+    {"id": 4, "job": "engineer", "cell": [18, 31], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}}
+  ],
+  "initialInventory": {"ironOre": 20, "steel": 10, "vegetables": 5},
+  "cargoCapacity": 100,
+  "initialBuildings": [
+    {"type": "exit_door", "origin": [22, 30], "quarterTurns": 3},
+    {"type": "corridor", "from": [25, 30], "to": [28, 31]},
+    {"type": "storage", "origin": [29, 30], "quarterTurns": 0},
+    {"type": "corridor", "from": [31, 30], "to": [34, 31]},
+    {"type": "iron_processor", "origin": [35, 30], "quarterTurns": 0},
+    {"type": "iron_mine", "origin": [8, 12], "quarterTurns": 0},
+    {"type": "solar_panel", "origin": [40, 50], "quarterTurns": 0}
+  ]
+}

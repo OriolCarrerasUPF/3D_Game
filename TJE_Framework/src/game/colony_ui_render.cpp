@@ -149,6 +149,14 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 		"  |  Colonists " + std::to_string(hud.colonists_alive);
 	if (hud.has_door)
 		line += std::string("  |  Door ") + (hud.door_open ? "open" : "closed");
+	// P06 utilities (plan C7, MVP-08): power, water flow and indoor oxygen coverage.
+	const UtilitySnapshot& utilities = simulation.getUtilities();
+	char utility_text[160];
+	std::snprintf(utility_text, sizeof(utility_text), "  |  Power %.0f/%.0f%s  Water %.2f/%.2f  O2 %d/%d%s",
+		utilities.power_demand, utilities.power_generated, utilities.powered ? "" : " SHORT",
+		utilities.waterUsed(), utilities.water_produced, utilities.indoor_population, utilities.oxygen_capacity,
+		utilities.oxygen_covered || utilities.indoor_population == 0 ? "" : " LOW");
+	line += utility_text;
 	const float status_room = ui.getButtonRect(UiButton::Pause).x - status_x - 8.0f;
 	texts.push_back({ status_x, centeredTextY(ui.getTopBar(), text_scale), fitText(line, status_room, text_scale),
 		hud.paused ? text_bad : text_white, text_scale });
@@ -223,7 +231,11 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 			texts.push_back({ x, y, std::string("State: ") + ColonyUI::stateName(colonist->state), text_white, text_scale });
 			y += 18.0f;
 			// Current task / why it is idle (P05), wrapped so the reason is never cut off.
-			for (const std::string& line : wrapText("Task: " + colonist->status, inner, small_text_scale, 2))
+			// P06: an urgent need without a service is shown even while the colonist works.
+			std::string task = colonist->status;
+			if (!colonist->need_alert.empty() && task.find(colonist->need_alert) == std::string::npos)
+				task = colonist->need_alert + "; " + task;
+			for (const std::string& line : wrapText("Task: " + task, inner, small_text_scale, 2))
 			{
 				texts.push_back({ x, y, line, text_dim, small_text_scale });
 				y += 13.0f;
@@ -283,15 +295,18 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 				texts.push_back({ x, y, std::to_string(present) + " present, " + std::to_string(reserved) + " reserved",
 					present > 0 ? text_good : text_white, small_text_scale });
 				y += 15.0f;
-				for (std::size_t slot = 0; slot < building->slots.size(); ++slot)
+				// Workers present are inside the building and listed at the bottom (clickable);
+				// here only the ones still on their way.
+				std::string on_the_way;
+				for (ColonistId id : building->slots)
 				{
-					const ColonistRecord* owner = simulation.findColonist(building->slots[slot]);
-					std::string text = "  slot " + std::to_string(slot + 1) + ": ";
-					if (!owner)
-						text += "free";
-					else
-						text += owner->name + (owner->state == ColonistState::Working ? " (working)" : " (on the way)");
-					texts.push_back({ x, y, fitText(text, inner, small_text_scale), owner ? text_white : text_dim, small_text_scale });
+					const ColonistRecord* owner = simulation.findColonist(id);
+					if (owner && owner->current_dome != building->id)
+						on_the_way += (on_the_way.empty() ? "" : ", ") + owner->name;
+				}
+				if (!on_the_way.empty())
+				{
+					texts.push_back({ x, y, fitText("  on the way: " + on_the_way, inner, small_text_scale), text_white, small_text_scale });
 					y += 14.0f;
 				}
 				y += 4.0f;
@@ -341,15 +356,16 @@ void ColonyUIRenderer::render(const ColonyUI& ui, const ColonySimulation& simula
 			if (def && def->storage_capacity > 0)
 			{
 				for (const std::string& line : wrapText("Adds " + std::to_string(def->storage_capacity) +
-						" item capacity; eat/drink point from P06", inner, small_text_scale, 2))
+						" item capacity; colonists eat and drink at its entrances", inner, small_text_scale, 2))
 				{
 					texts.push_back({ x, y, line, text_dim, small_text_scale });
 					y += 13.0f;
 				}
 			}
 
-			// P05B: who is inside the dome (hidden in the world); each row opens that colonist.
-			if (def && def->isDome())
+			// Who is inside (hidden in the world): a dome's occupants (P05B) or the workers of
+			// an exterior building (P06); each row opens that colonist.
+			if (def && (def->isDome() || def->has_operation))
 			{
 				const std::vector<ColonistId>& inside = ui.getOccupants();
 				const UiRect first_row = ui.getOccupantRowRect(0);

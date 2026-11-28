@@ -149,6 +149,17 @@ enum class Job : std::uint8_t
 	Farmer
 };
 
+// The three needs (plan C2/C6). The order is the deterministic tie order when several
+// needs are urgent: Oxygen, Thirst, Hunger.
+enum class NeedType : std::uint8_t
+{
+	Oxygen,
+	Thirst,
+	Hunger
+};
+
+constexpr std::size_t need_type_count = 3;
+
 // Full state list from plan C6.1. P05 uses Idle, MovingToWork and Working; the
 // service states arrive with needs in P06, so this enum does not have to change later.
 enum class ColonistState : std::uint8_t

@@ -410,6 +410,10 @@ void ColonyWorld::syncCorridorPieces(const ColonySimulation& simulation)
 			base_layout::addAirlockOffsets(building.footprint_cells, building.quarter_turns, passage_offsets);
 		else if (def->isDome())
 		{
+			// Walkable domes are inside cells, but for the corridor view they are a wall
+			// (the dome shell) except at their entrances.
+			for (Cell c : building.footprint_cells)
+				inside.erase(base_layout::key(c));
 			// A dome entrance leaves the corridor open towards the dome.
 			for (Cell access : building.access_cells)
 				for (Cell c : building.footprint_cells)

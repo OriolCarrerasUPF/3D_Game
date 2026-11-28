@@ -48,6 +48,9 @@ namespace
 				{ "job": "engineer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( },
 				{ "job": "miner", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( },
 				{ "job": "farmer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": )" << speed << R"( } ],
+				"needs": { "refillThreshold": 20, "drainPerSecond": { "hunger": 0.10, "thirst": 0.12, "oxygen": 0.10 },
+				"drinkPerSecond": 20, "waterPerThirstPoint": 0.01, "eatSeconds": 3, "vegetablesPerMeal": 1,
+				"suitRefillPerSecond": 20, "serviceRetrySeconds": 2 },
 				"names": [ "Ada", "Bram", "Cleo" ] })";
 		}
 		GameDefinitions definitions;
@@ -247,16 +250,19 @@ TEST_CASE("simulation: same inputs give the same result (deterministic replay)")
 	CHECK_NEAR(a.getSimulationTime(), 40.0, 1e-3);
 }
 
-TEST_CASE("simulation: without a debug route the colonist stays idle")
+TEST_CASE("simulation: without a debug route the idle colonist waits inside the base")
 {
 	ColonySimulation simulation;
 	std::string error;
 	CHECK(simulation.initialize(makeScenario(false), makeDefinitions(2.0f), error));
-	for (int tick = 0; tick < 60; ++tick)
+	for (int tick = 0; tick < 30 * 30; ++tick)
 		simulation.tick(1.0f / 30.0f);
+	// P06 idle rule: no job and no dome, so it waits on an inside cell that is not a door cell.
 	const ColonistRecord& c = *simulation.findColonist(1);
 	CHECK(c.state == ColonistState::Idle);
-	CHECK(c.last_cell == (Cell{ 2, 7 }));
+	CHECK(simulation.getGrid().getZone(c.last_cell) == Zone::Inside);
+	CHECK(!simulation.isDoorCell(c.last_cell));
+	CHECK(c.status.find("waiting in the base") != std::string::npos);
 }
 
 TEST_CASE("simulation: debug commands return structured results")

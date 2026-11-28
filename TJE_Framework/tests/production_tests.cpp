@@ -130,11 +130,11 @@ TEST_CASE("production: dev scenario places its buildings, blocks footprints and 
 	ColonySimulation simulation;
 	if (!start(simulation, devScenario(), makeDefinitions()))
 		return;
-	// Mine, Exit Door, 20 corridor cells, 2 Storages and the Iron Processor.
+	// Mine, Exit Door, 20 corridor cells, 2 Storages, the Iron Processor and a Solar Panel (P06).
 	std::map<BuildingType, int> count;
 	for (const BuildingRecord& building : simulation.getBuildings())
 		++count[building.type];
-	CHECK_EQ(simulation.getBuildings().size(), static_cast<std::size_t>(25));
+	CHECK_EQ(simulation.getBuildings().size(), static_cast<std::size_t>(26));
 	CHECK_EQ(count[BuildingType::Corridor], 20);
 	CHECK_EQ(count[BuildingType::Storage], 2);
 	CHECK_EQ(count[BuildingType::ExitDoor], 1);
@@ -145,8 +145,17 @@ TEST_CASE("production: dev scenario places its buildings, blocks footprints and 
 	{
 		CHECK(building.isComplete());
 		const BuildingDefinition* def = simulation.findDefinition(building.type);
+		// Exterior buildings block their footprint; corridors, airlocks and (since P06)
+		// complete domes are walkable. A dome is an inside room with its own id.
 		for (Cell cell : building.footprint_cells)
-			CHECK(grid.isBlocked(cell) != def->hasWalkableFootprint());
+		{
+			CHECK(grid.isBlocked(cell) == (!def->hasWalkableFootprint() && !def->isDome()));
+			if (def->isDome())
+			{
+				CHECK(grid.getZone(cell) == Zone::Inside);
+				CHECK_EQ(grid.getRoom(cell), building.id);
+			}
+		}
 		for (Cell cell : building.inside_cells)
 			CHECK(grid.getZone(cell) == Zone::Inside);
 		// Every dome has an entrance on the corridor.
@@ -172,7 +181,7 @@ TEST_CASE("production: a Miner reserves before walking and produces only while p
 {
 	Json scenario = devScenario();
 	scenario["initialColonists"] = Json::array({ colonist(1, "miner", 18, 31) });
-	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12) });
+	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12), building("solar_panel", 40, 50) });
 	ColonySimulation simulation;
 	if (!start(simulation, scenario, makeDefinitions()))
 		return;
@@ -215,7 +224,7 @@ TEST_CASE("production: a Miner reserves before walking and produces only while p
 TEST_CASE("production: present Miners add up (5 Miners -> 5 ore per 5 s)")
 {
 	Json scenario = devScenario();
-	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12) });
+	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12), building("solar_panel", 40, 50) });
 	scenario["initialColonists"] = Json::array({ colonist(1, "miner", 7, 14), colonist(2, "miner", 7, 15),
 		colonist(3, "miner", 6, 14), colonist(4, "miner", 6, 15), colonist(5, "miner", 5, 14) });
 	ColonySimulation simulation;
@@ -267,7 +276,7 @@ TEST_CASE("production: two Miners competing for the last slot")
 	const GameDefinitions definitions = makeDefinitions(&buildings);
 
 	Json scenario = devScenario();
-	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12) });
+	scenario["initialBuildings"] = Json::array({ building("iron_mine", 8, 12), building("solar_panel", 40, 50) });
 	// Colonist 2 is listed first in the file and is even closer; colonists still choose in ID order.
 	scenario["initialColonists"] = Json::array({ colonist(2, "miner", 4, 12), colonist(1, "miner", 7, 8) });
 	ColonySimulation simulation;
@@ -484,7 +493,7 @@ TEST_CASE("production: bad initial buildings and inventory report their JSON poi
 	scenario["initialBuildings"].push_back(building("storage", 27, 33));
 	ColonySimulation b;
 	CHECK(!start(b, scenario, makeDefinitions(), &error));
-	CHECK(error.rfind("/initialBuildings/6:", 0) == 0);
+	CHECK(error.rfind("/initialBuildings/7:", 0) == 0);
 	CHECK(b.getBuildings().empty()); // nothing is left half-initialised
 
 	scenario = devScenario();
@@ -527,6 +536,9 @@ TEST_CASE("production: names come from the pool in ID order and must be enough")
 			{ "job": "engineer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": 1.8 },
 			{ "job": "miner", "assetId": "astronaut", "materialId": "crew", "moveSpeed": 1.8 },
 			{ "job": "farmer", "assetId": "astronaut", "materialId": "crew", "moveSpeed": 1.8 } ],
+			"needs": { "refillThreshold": 20, "drainPerSecond": { "hunger": 0.10, "thirst": 0.12, "oxygen": 0.10 },
+			"drinkPerSecond": 20, "waterPerThirstPoint": 0.01, "eatSeconds": 3, "vegetablesPerMeal": 1,
+			"suitRefillPerSecond": 20, "serviceRetrySeconds": 2 },
 			"names": [ "Solo" ] })";
 	}
 	GameDefinitions definitions = makeDefinitions();

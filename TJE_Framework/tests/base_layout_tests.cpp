@@ -266,8 +266,11 @@ TEST_CASE("base layout: a Miner works hidden inside the processor dome (acceptan
 	CHECK(simulation.assignJob(worker, Job::Engineer, reason));
 	CHECK_EQ(miner->current_dome, INVALID_BUILDING);
 	CHECK(simulation.occupants(processor->id).empty());
+	// P06 idle rule: the new Engineer has no job, so it waits at the nearest dome
+	// entrance, which is where it stands: inside the processor again, but idle.
 	simulation.tick(1.0f / 30.0f);
-	CHECK_EQ(miner->current_dome, INVALID_BUILDING);
+	CHECK(miner->state == ColonistState::Idle);
+	CHECK(!miner->reservation.active());
 }
 
 TEST_CASE("base layout: same inputs give the same base (deterministic replay)")
@@ -286,4 +289,102 @@ TEST_CASE("base layout: same inputs give the same base (deterministic replay)")
 		CHECK_EQ(a.getColonists()[i].current_dome, b.getColonists()[i].current_dome);
 	}
 	CHECK(a.getInventory().getAmounts() == b.getInventory().getAmounts());
+}
+
+namespace
+{
+	// data/arkfall/dev/dome_chain.json: door -> corridor -> Storage -> corridor -> Iron
+	// Processor; the processor is reachable only by walking through the Storage dome
+	// (walkable domes, P06). One Miner, so the processor is its nearest job.
+	json_data::Json chainScenario()
+	{
+		json_data::Json doc;
+		DataLoadError error;
+		if (!json_data::loadJson("data/arkfall/dev/dome_chain.json", doc, error))
+			test::fail(__FILE__, __LINE__, error.describe());
+		doc["initialColonists"] = json_data::Json::parse(R"([
+			{"id": 1, "job": "miner", "cell": [17, 30], "needs": {"hunger": 100, "thirst": 100, "oxygen": 100}}])");
+		return doc;
+	}
+}
+
+TEST_CASE("base layout: a colonist reaches a dome only reachable through another dome")
+{
+	const ScenarioLoadResult loaded = ScenarioLoader().parse(chainScenario(), "chain.json");
+	if (!loaded)
+	{
+		test::fail(__FILE__, __LINE__, loaded.error->describe());
+		return;
+	}
+	ColonySimulation simulation;
+	std::string error;
+	if (!simulation.initialize(loaded.scenario, shippedDefinitions(), error))
+	{
+		test::fail(__FILE__, __LINE__, error);
+		return;
+	}
+	const NavigationGrid& grid = simulation.getGrid();
+	const BuildingRecord* storage = nullptr;
+	const BuildingRecord* processor = nullptr;
+	for (const BuildingRecord& b : simulation.getBuildings())
+	{
+		if (b.type == BuildingType::Storage)
+			storage = &b;
+		if (b.type == BuildingType::IronProcessor)
+			processor = &b;
+	}
+	CHECK(storage && processor);
+	if (!storage || !processor)
+		return;
+	// The Storage is entered only through its entrances: (28, 30) on the first corridor and
+	// (31, 30) on the second; its side walls stay closed, also towards the outside.
+	CHECK(grid.canStep(Cell{ 28, 30 }, Cell{ 29, 30 }));
+	CHECK(grid.canStep(Cell{ 30, 30 }, Cell{ 31, 30 }));
+	CHECK(!grid.canStep(Cell{ 28, 31 }, Cell{ 29, 31 }));   // corridor beside the dome wall
+	CHECK(!grid.canStep(Cell{ 29, 32 }, Cell{ 29, 31 }));   // outside -> dome
+	std::vector<Cell> path;
+	CHECK(grid.findPath(Cell{ 25, 30 }, Cell{ 34, 30 }, path));
+	bool through_storage = false;
+	for (Cell c : path)
+		through_storage = through_storage || grid.getRoom(c) == storage->id;
+	CHECK(through_storage);
+
+	// The Miner walks door -> corridor -> Storage -> corridor and works at the processor;
+	// it is hidden while crossing the Storage.
+	const ColonistRecord* miner = simulation.findColonist(1);
+	bool hidden_in_storage = false;
+	for (int i = 0; i < 30 * 60 && miner->state != ColonistState::Working; ++i)
+	{
+		simulation.tick(1.0f / 30.0f);
+		hidden_in_storage = hidden_in_storage || miner->current_dome == storage->id;
+	}
+	CHECK(hidden_in_storage);
+	CHECK(miner->state == ColonistState::Working);
+	CHECK_EQ(miner->reservation.building, processor->id);
+	CHECK_EQ(miner->current_dome, processor->id);
+	simulation.tick(1.0f / 30.0f);
+	CHECK(simulation.occupants(storage->id).empty());
+}
+
+TEST_CASE("base layout: walkable dome placement rules")
+{
+	const ScenarioLoadResult loaded = ScenarioLoader().parse(chainScenario(), "chain.json");
+	ColonySimulation simulation;
+	std::string error;
+	if (!loaded || !simulation.initialize(loaded.scenario, shippedDefinitions(), error))
+	{
+		test::fail(__FILE__, __LINE__, error);
+		return;
+	}
+	auto code = [&](BuildingType type, int x, int z, int q = 0) { return simulation.validatePlacement(type, Cell{ x, z }, q).code; };
+	// A corridor joins on a dome entrance candidate ((30, 29) is one of the Storage's)...
+	CHECK_EQ(code(BuildingType::Corridor, 30, 29), std::string("ok"));
+	// ...but not beside a dome wall that has no entrance there.
+	CHECK_EQ(code(BuildingType::Corridor, 29, 32), std::string("needs_network"));
+	// A dome cannot open into another dome.
+	CHECK_EQ(code(BuildingType::Storage, 29, 32), std::string("access_blocked"));
+	// Exterior buildings stay off the domes.
+	CHECK_EQ(code(BuildingType::SolarPanel, 30, 26), std::string("ok"));
+	CHECK(simulation.isNetworkCell(Cell{ 29, 30 }));
+	CHECK(!simulation.isPassageCell(Cell{ 29, 30 }));
 }

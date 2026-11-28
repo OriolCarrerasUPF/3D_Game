@@ -21,6 +21,7 @@ NavigationGrid::NavigationGrid(int width, int height, float cell_size, float ori
 	const std::size_t count = static_cast<std::size_t>(this->width) * static_cast<std::size_t>(this->height);
 	blocked.assign(count, 0);
 	zones.assign(count, Zone::Outside);
+	rooms.assign(count, 0u);
 	parent.assign(count, -1);
 	visit_stamp.assign(count, 0);
 }
@@ -89,6 +90,36 @@ Zone NavigationGrid::getZone(Cell cell) const
 	return inBounds(cell) ? zones[index(cell)] : Zone::Outside;
 }
 
+void NavigationGrid::setRoom(Cell cell, std::uint32_t room)
+{
+	if (!inBounds(cell))
+		return;
+	std::uint32_t& value = rooms[index(cell)];
+	if (value != room)
+	{
+		value = room;
+		++revision;
+	}
+}
+
+std::uint32_t NavigationGrid::getRoom(Cell cell) const
+{
+	return inBounds(cell) ? rooms[index(cell)] : 0u;
+}
+
+void NavigationGrid::addRoomOpening(Cell a, Cell b)
+{
+	if (!inBounds(a) || !inBounds(b) || std::abs(a.x - b.x) + std::abs(a.z - b.z) != 1)
+		return;
+	if (room_openings.insert(edgeKey(a, b)).second)
+		++revision;
+}
+
+bool NavigationGrid::isRoomOpening(Cell a, Cell b) const
+{
+	return inBounds(a) && inBounds(b) && room_openings.count(edgeKey(a, b)) != 0;
+}
+
 std::uint64_t NavigationGrid::edgeKey(Cell a, Cell b) const
 {
 	const std::uint64_t ia = static_cast<std::uint64_t>(index(a));
@@ -134,6 +165,8 @@ bool NavigationGrid::canStep(Cell from, Cell to) const
 	if (!isWalkable(from) || !isWalkable(to))
 		return false;
 	if (std::abs(from.x - to.x) + std::abs(from.z - to.z) != 1)
+		return false;
+	if (rooms[index(from)] != rooms[index(to)] && !room_openings.count(edgeKey(from, to)))
 		return false;
 	if (getZone(from) == getZone(to))
 		return true;

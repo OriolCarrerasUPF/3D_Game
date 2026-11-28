@@ -5,6 +5,16 @@
     { "job": "miner", "assetId": "astronaut", "materialId": "crew_miner", "moveSpeed": 1.8 },
     { "job": "farmer", "assetId": "astronaut", "materialId": "crew_farmer", "moveSpeed": 1.8 }
   ],
+  "needs": {
+    "refillThreshold": 20,
+    "drainPerSecond": { "hunger": 0.10, "thirst": 0.12, "oxygen": 0.10 },
+    "drinkPerSecond": 20,
+    "waterPerThirstPoint": 0.01,
+    "eatSeconds": 3,
+    "vegetablesPerMeal": 1,
+    "suitRefillPerSecond": 20,
+    "serviceRetrySeconds": 2
+  },
   "names": [
     "Ada Vance", "Bram Okafor", "Cleo Lindqvist", "Dario Moreau", "Elin Tanaka",
     "Farid Reyes", "Greta Novak", "Hugo Hale", "Ines Sato", "Jonas Brandt",
